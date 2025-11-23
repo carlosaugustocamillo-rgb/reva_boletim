@@ -6,3 +6,6 @@ pydub
 pytz
 mailchimp-marketing
 requests
+audioop-lts
+pyaudioop
+
