@@ -1,5 +1,6 @@
 from agents import function_tool, Agent, ModelSettings, TResponseInputItem, Runner, RunConfig, trace
 from pydantic import BaseModel
+from boletim_service import rodar_boletim as rodar_boletim_job
 
 # Tool definitions
 @function_tool
