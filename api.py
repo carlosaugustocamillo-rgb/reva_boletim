@@ -38,6 +38,6 @@ async def agente_revacast(input: WorkflowInput):
     - Recebe a mensagem do usuário em input.input_as_text
     - Roda o workflow do agente
     - O agente decide quando chamar a tool rodar_boletim(tipo_execucao=...)
-    - A tool chama o endpoint /rodar-boletim do serviço de boletim (via HTTP)
+    - A tool dispara o processo local do boletim em background (sem HTTP) e responde rapidamente
     """
     return await run_workflow(input)
