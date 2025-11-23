@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+openai
+biopython
+pydub
+mailchimp-marketing
+pytz

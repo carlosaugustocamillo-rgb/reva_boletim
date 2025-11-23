@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+.env_copy
+.env_copy.example
+data/
+audios/
+.DS_Store
