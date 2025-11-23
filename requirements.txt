@@ -7,3 +7,4 @@ pytz
 mailchimp-marketing
 requests
 audioop-lts
+openai-agents
