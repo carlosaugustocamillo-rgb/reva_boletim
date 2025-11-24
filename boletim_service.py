@@ -228,6 +228,13 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0):
     Gera um roteiro de podcast em formato de CONVERSA entre dois apresentadores,
     com base no RESUMO TRADUZIDO. Retorna uma lista de dicionários com speaker e text.
     """
+    
+    # Define se é o primeiro estudo ou não para ajustar a transição
+    if idx == 0:
+        contexto_inicial = "Este é o PRIMEIRO estudo do episódio. Comece direto apresentando o estudo, sem saudações."
+    else:
+        contexto_inicial = f"Este é o estudo número {idx + 1}. NÃO faça saudações. Comece DIRETO com uma transição natural tipo 'Agora vamos falar de outro estudo...' ou 'O próximo artigo trata de...'."
+    
     prompt = f"""
 Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
 
@@ -235,11 +242,15 @@ Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo es
 
 REGRAS OBRIGATÓRIAS:
 - NUNCA invente dados, números ou resultados que não estejam no resumo
-- Faça uma conversa natural e dinâmica, como amigos discutindo um artigo interessante
-- O HOST deve apresentar o estudo, o COHOST faz perguntas, comenta e adiciona insights
-- Mantenha informal mas profissional, como dois colegas da área da saúde conversando
+- {contexto_inicial}
+- NÃO use saudações como "Olá", "Oi", "Bem-vindos" em NENHUMA fala
+- NÃO se apresente ou reapresente
+- Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos
+- O HOST apresenta o estudo, o COHOST faz perguntas e comenta
+- Mantenha informal mas profissional
 - De 5 a 8 falas no total (alternando entre HOST e COHOST)
 - Cada fala deve ter 1-3 frases curtas e diretas
+- Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1)
 
 Contexto do estudo:
 Título: {titulo}
@@ -251,7 +262,7 @@ Resumo traduzido:
 FORMATO DE RETORNO (JSON array):
 Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
 [
-  {{"speaker": "HOST", "text": "Olá! Vamos falar sobre um estudo interessante..."}},
+  {{"speaker": "HOST", "text": "Vamos falar sobre um estudo interessante..."}},
   {{"speaker": "COHOST", "text": "Legal! O que eles investigaram?"}},
   {{"speaker": "HOST", "text": "Eles analisaram..."}},
   {{"speaker": "COHOST", "text": "E quais foram os resultados?"}}
@@ -263,7 +274,7 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
         messages=[
             {
                 "role": "system",
-                "content": "Você é um roteirista de podcast. Retorne SEMPRE e SOMENTE um JSON array válido com o diálogo."
+                "content": "Você é um roteirista de podcast. Retorne SEMPRE e SOMENTE um JSON array válido com o diálogo. NUNCA use saudações ou apresentações."
             },
             {"role": "user", "content": prompt}
         ],
