@@ -80,11 +80,14 @@ from elevenlabs.client import ElevenLabs
 
 # --- ElevenLabs ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "pNInz6obpgDQGcFmaJgB")
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "uu3jBatEwHsOkmMzZdNX")
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
     elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+    print(f"✅ ElevenLabs configurado com vozes:")
+    print(f"   HOST: {ELEVEN_VOICE_ID_HOST}")
+    print(f"   COHOST: {ELEVEN_VOICE_ID_COHOST}")
 
 
 # ======================================================================
@@ -280,6 +283,12 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
         # Tenta parsear como JSON
         dialogo = json.loads(conteudo)
         
+        # Formata abreviações em cada fala
+        if isinstance(dialogo, list):
+            for fala in dialogo:
+                if 'text' in fala:
+                    fala['text'] = formatar_abreviacoes(fala['text'])
+        
         # Se é um objeto com uma chave, extrai a lista
         if isinstance(dialogo, dict):
             dialogo = dialogo.get('dialogue', dialogo.get('dialog', dialogo.get('conversation', [])))
@@ -289,6 +298,33 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
         print(f"Erro ao parsear diálogo JSON: {e}")
         # Fallback: retorna texto simples como HOST
         return [{"speaker": "HOST", "text": conteudo}]
+
+
+def formatar_abreviacoes(texto):
+    """
+    Formata abreviações comuns adicionando pontos entre as letras
+    para o ElevenLabs pronunciar corretamente.
+    """
+    abreviacoes = {
+        r'\bDPOC\b': 'D.P.O.C.',
+        r'\bDPI\b': 'D.P.I.',
+        r'\bVEF1\b': 'V.E.F.1',
+        r'\bVEF\b': 'V.E.F.',
+        r'\bCVF\b': 'C.V.F.',
+        r'\bFEV1\b': 'F.E.V.1',
+        r'\bIMC\b': 'I.M.C.',
+        r'\bOMS\b': 'O.M.S.',
+        r'\bUSA\b': 'U.S.A.',
+        r'\bEUA\b': 'E.U.A.',
+        r'\bUK\b': 'U.K.',
+        r'\bCOPD\b': 'C.O.P.D.',
+    }
+    
+    import re
+    for abrev, formatada in abreviacoes.items():
+        texto = re.sub(abrev, formatada, texto, flags=re.IGNORECASE)
+    
+    return texto
 
 
 def dividir_texto(texto, limite=4096):
@@ -748,18 +784,37 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     if roteiros_audio:
         audio_paths = []
         
-        # Para cada estudo, gerar o diálogo completo
+        # Para cada estudo, gerar o diálogo completo como um único áudio conversacional
         for estudo_idx, dialogo in enumerate(roteiros_audio):
             if not isinstance(dialogo, list):
                 print(f"Aviso: roteiro do estudo {estudo_idx+1} não é uma lista. Pulando.")
                 continue
+            
+            try:
+                if not elevenlabs_client:
+                    raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
                 
-            # Para cada fala no diálogo
-            for fala_idx, fala in enumerate(dialogo):
-                try:
-                    if not elevenlabs_client:
-                        raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
-                    
+                # Preparar o roteiro conversacional completo
+                roteiro_texto = ""
+                for fala in dialogo:
+                    speaker = fala.get('speaker', 'HOST')
+                    text = fala.get('text', '')
+                    if text:
+                        # Marca quem está falando usando tags especiais
+                        speaker_name = "apresentador 1" if speaker == 'HOST' else "apresentador 2"
+                        roteiro_texto += f"{speaker_name}: {text}\n\n"
+                
+                if not roteiro_texto:
+                    continue
+                
+                # Gera um único áudio conversacional para todo o estudo
+                # Alternando automaticamente entre as vozes
+                print(f"🎙️ Gerando áudio conversacional para estudo {estudo_idx+1}...")
+                
+                # Como a API do ElevenLabs não tem suporte nativo para conversação com múltiplas vozes
+                # em uma única chamada, vamos gerar com pausas menores entre as falas
+                estudo_audios = []
+                for fala_idx, fala in enumerate(dialogo):
                     speaker = fala.get('speaker', 'HOST')
                     text = fala.get('text', '')
                     
@@ -775,17 +830,38 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                         model_id="eleven_multilingual_v2"
                     )
                     
-                    caminho = os.path.join(AUDIO_DIR, f"estudo{estudo_idx+1}_fala{fala_idx+1}_{speaker.lower()}.mp3")
+                    caminho_temp = os.path.join(AUDIO_DIR, f"temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3")
                     
-                    with open(caminho, "wb") as f:
+                    with open(caminho_temp, "wb") as f:
                         for chunk in audio_generator:
                             f.write(chunk)
                     
-                    audio_paths.append(caminho)
-                    print(f"🎙️ {speaker}: Áudio {fala_idx+1} do estudo {estudo_idx+1} gerado - {caminho}")
+                    estudo_audios.append(caminho_temp)
+                
+                # Combina todos os áudios do estudo com pausas curtas (300ms)
+                if estudo_audios:
+                    estudo_combinado = AudioSegment.empty()
+                    for idx, audio_path in enumerate(estudo_audios):
+                        estudo_combinado += AudioSegment.from_file(audio_path, format="mp3")
+                        # Pausa curta entre falas (exceto na última)
+                        if idx < len(estudo_audios) - 1:
+                            estudo_combinado += AudioSegment.silent(duration=300)
                     
-                except Exception as e:
-                    print(f"Erro ao gerar áudio (estudo {estudo_idx+1}, fala {fala_idx+1}): {e}")
+                    caminho_estudo = os.path.join(AUDIO_DIR, f"estudo{estudo_idx+1}_completo.mp3")
+                    estudo_combinado.export(caminho_estudo, format="mp3")
+                    audio_paths.append(caminho_estudo)
+                    
+                    # Remove arquivos temporários
+                    for temp_path in estudo_audios:
+                        try:
+                            os.remove(temp_path)
+                        except:
+                            pass
+                    
+                    print(f"✅ Áudio conversacional do estudo {estudo_idx+1} gerado: {caminho_estudo}")
+                    
+            except Exception as e:
+                print(f"Erro ao gerar áudio do estudo {estudo_idx+1}: {e}")
 
         # Carregar intro
         try:
