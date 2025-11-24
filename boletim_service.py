@@ -201,7 +201,7 @@ def traduzir_resumo(texto):
     """
 
     resposta = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[
             {
                 "role": "system",
@@ -268,7 +268,7 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
 """
 
     resposta = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-5.1",
         messages=[
             {
                 "role": "system",
