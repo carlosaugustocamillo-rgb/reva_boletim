@@ -101,13 +101,13 @@ def buscar_ids(query):
     tz = pytz.timezone("America/Sao_Paulo")
     agora = datetime.now(tz)
     
-    # Últimos 7 dias a partir de hoje
+    # Últimos 14 dias a partir de hoje (TEMPORÁRIO PARA TESTES)
     data_final = agora.date()
-    data_inicial = data_final - timedelta(days=7)
+    data_inicial = data_final - timedelta(days=14)
 
     mindate = data_inicial.strftime("%Y/%m/%d")
     maxdate = data_final.strftime("%Y/%m/%d")
-    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (últimos 7 dias)")
+    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (últimos 14 dias - TESTE)")
     print(f"Query: {query}")
 
     # 1) Primeiro esearch: só pra saber o COUNT
@@ -873,10 +873,20 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                     # Escolhe a voz baseado no speaker
                     voice_id = ELEVEN_VOICE_ID_HOST if speaker == 'HOST' else ELEVEN_VOICE_ID_COHOST
                     
+                    print(f"   → {speaker}: usando voice_id = {voice_id}")
+                    
+                    from elevenlabs import VoiceSettings
+                    
                     audio_generator = elevenlabs_client.text_to_speech.convert(
                         voice_id=voice_id,
                         text=text,
-                        model_id="eleven_multilingual_v2"
+                        model_id="eleven_multilingual_v2",
+                        voice_settings=VoiceSettings(
+                            stability=0.75,  # Alta estabilidade para consistência
+                            similarity_boost=0.85,  # Alta similaridade com a voz original
+                            style=0.0,  # Sem estilo adicional
+                            use_speaker_boost=True  # Reforça a voz do speaker
+                        )
                     )
                     
                     caminho_temp = os.path.join(AUDIO_DIR, f"temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3")
