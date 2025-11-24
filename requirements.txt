@@ -7,3 +7,4 @@ pytz
 mailchimp-marketing
 requests
 elevenlabs
+pyaudioop
