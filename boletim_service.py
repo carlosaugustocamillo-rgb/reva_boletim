@@ -80,6 +80,8 @@ from elevenlabs.client import ElevenLabs
 
 # --- ElevenLabs ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "pNInz6obpgDQGcFmaJgB")
+ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
     elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
@@ -220,36 +222,37 @@ def traduzir_resumo(texto):
 
 def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0):
     """
-    Gera um roteiro curto de podcast, em tom de conversa,
-    com base no RESUMO TRADUZIDO.
+    Gera um roteiro de podcast em formato de CONVERSA entre dois apresentadores,
+    com base no RESUMO TRADUZIDO. Retorna uma lista de dicionários com speaker e text.
     """
-    aberturas = [
-        "Comente este estudo de forma direta, como se estivesse conversando com colegas.",
-        "Explique este estudo em tom de conversa, sem formalidade excessiva.",
-        "Apresente os resultados deste estudo de forma clara e objetiva, como num bate-papo entre profissionais de saúde.",
-        "Faça uma explicação fluida sobre este estudo, como em uma discussão de casos na clínica."
-    ]
-
     prompt = f"""
-Você vai transformar o resumo de um artigo científico em um roteiro curto para podcast.
+Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
 
-REGRAS:
-- Use APENAS as informações que estão no resumo em português abaixo.
-- NÃO invente novos resultados, números, porcentagens ou conclusões.
-- Se o resumo não trouxer números, NÃO crie valores numéricos.
-- Fale de modo informal e direto, como se estivesse conversando com colegas fisioterapeutas.
-- NÃO cite volume, página ou link. Você pode mencionar o primeiro autor e o nome do jornal.
-- Não faça saudação, nem despedida. Apenas o conteúdo.
+Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo este estudo científico.
 
-Contexto:
+REGRAS OBRIGATÓRIAS:
+- NUNCA invente dados, números ou resultados que não estejam no resumo
+- Faça uma conversa natural e dinâmica, como amigos discutindo um artigo interessante
+- O HOST deve apresentar o estudo, o COHOST faz perguntas, comenta e adiciona insights
+- Mantenha informal mas profissional, como dois colegas da área da saúde conversando
+- De 5 a 8 falas no total (alternando entre HOST e COHOST)
+- Cada fala deve ter 1-3 frases curtas e diretas
+
+Contexto do estudo:
 Título: {titulo}
 Primeiro autor: {primeiro_autor}
 
-Resumo em português (traduzido diretamente do PubMed):
+Resumo traduzido:
 {resumo_pt}
 
-Tarefa:
-{aberturas[idx % len(aberturas)]}
+FORMATO DE RETORNO (JSON array):
+Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
+[
+  {{"speaker": "HOST", "text": "Olá! Vamos falar sobre um estudo interessante..."}},
+  {{"speaker": "COHOST", "text": "Legal! O que eles investigaram?"}},
+  {{"speaker": "HOST", "text": "Eles analisaram..."}},
+  {{"speaker": "COHOST", "text": "E quais foram os resultados?"}}
+]
 """
 
     resposta = client.chat.completions.create(
@@ -257,13 +260,35 @@ Tarefa:
         messages=[
             {
                 "role": "system",
-                "content": "Você é um apresentador de podcast de ciência da saúde que nunca inventa dados."
+                "content": "Você é um roteirista de podcast. Retorne SEMPRE e SOMENTE um JSON array válido com o diálogo."
             },
             {"role": "user", "content": prompt}
         ],
-        temperature=0.3,
+        temperature=0.7,
     )
-    return resposta.choices[0].message.content.strip()
+    
+    import json
+    try:
+        conteudo = resposta.choices[0].message.content.strip()
+        # Remove markdown code blocks se existirem
+        if conteudo.startswith('```'):
+            conteudo = conteudo.split('```')[1]
+            if conteudo.startswith('json'):
+                conteudo = conteudo[4:]
+        conteudo = conteudo.strip()
+        
+        # Tenta parsear como JSON
+        dialogo = json.loads(conteudo)
+        
+        # Se é um objeto com uma chave, extrai a lista
+        if isinstance(dialogo, dict):
+            dialogo = dialogo.get('dialogue', dialogo.get('dialog', dialogo.get('conversation', [])))
+        
+        return dialogo if isinstance(dialogo, list) else []
+    except Exception as e:
+        print(f"Erro ao parsear diálogo JSON: {e}")
+        # Fallback: retorna texto simples como HOST
+        return [{"speaker": "HOST", "text": conteudo}]
 
 
 def dividir_texto(texto, limite=4096):
@@ -718,33 +743,49 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     print(f"✅ Boletim detalhado salvo como: {boletim_detalhado_path}")
 
     # ------------------------------------------------------------------
-    # 3) GERAÇÃO DO ÁUDIO (se houver roteiros)
+    # 3) GERAÇÃO DO ÁUDIO EM FORMATO DE CONVERSA (se houver roteiros)
     # ------------------------------------------------------------------
     if roteiros_audio:
-        roteiro_final = "\n\n".join(roteiros_audio)
-        partes_audio = dividir_texto(roteiro_final, limite=3000)
-
         audio_paths = []
-        for i, parte in enumerate(partes_audio):
-            try:
-                if not elevenlabs_client:
-                    raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
-
-                audio_generator = elevenlabs_client.text_to_speech.convert(
-                    voice_id="pNInz6obpgDQGcFmaJgB",  # Adam voice ID
-                    text=parte,
-                    model_id="eleven_multilingual_v2"
-                )
-                caminho = os.path.join(AUDIO_DIR, f"bloco_{i+1}.mp3")
+        
+        # Para cada estudo, gerar o diálogo completo
+        for estudo_idx, dialogo in enumerate(roteiros_audio):
+            if not isinstance(dialogo, list):
+                print(f"Aviso: roteiro do estudo {estudo_idx+1} não é uma lista. Pulando.")
+                continue
                 
-                with open(caminho, "wb") as f:
-                    for chunk in audio_generator:
-                        f.write(chunk)
-                
-                audio_paths.append(caminho)
-                print(f"🎙️ Bloco de áudio {i+1} gerado com ElevenLabs: {caminho}")
-            except Exception as e:
-                print(f"Erro ao gerar áudio do bloco {i+1} com ElevenLabs: {e}")
+            # Para cada fala no diálogo
+            for fala_idx, fala in enumerate(dialogo):
+                try:
+                    if not elevenlabs_client:
+                        raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
+                    
+                    speaker = fala.get('speaker', 'HOST')
+                    text = fala.get('text', '')
+                    
+                    if not text:
+                        continue
+                    
+                    # Escolhe a voz baseado no speaker
+                    voice_id = ELEVEN_VOICE_ID_HOST if speaker == 'HOST' else ELEVEN_VOICE_ID_COHOST
+                    
+                    audio_generator = elevenlabs_client.text_to_speech.convert(
+                        voice_id=voice_id,
+                        text=text,
+                        model_id="eleven_multilingual_v2"
+                    )
+                    
+                    caminho = os.path.join(AUDIO_DIR, f"estudo{estudo_idx+1}_fala{fala_idx+1}_{speaker.lower()}.mp3")
+                    
+                    with open(caminho, "wb") as f:
+                        for chunk in audio_generator:
+                            f.write(chunk)
+                    
+                    audio_paths.append(caminho)
+                    print(f"🎙️ {speaker}: Áudio {fala_idx+1} do estudo {estudo_idx+1} gerado - {caminho}")
+                    
+                except Exception as e:
+                    print(f"Erro ao gerar áudio (estudo {estudo_idx+1}, fala {fala_idx+1}): {e}")
 
         # Carregar intro
         try:
