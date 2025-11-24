@@ -223,7 +223,7 @@ def traduzir_resumo(texto):
     return resposta.choices[0].message.content.strip()
 
 
-def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0):
+def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False):
     """
     Gera um roteiro de podcast em formato de CONVERSA entre dois apresentadores,
     com base no RESUMO TRADUZIDO. Retorna uma lista de dicionários com speaker e text.
@@ -235,6 +235,12 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0):
     else:
         contexto_inicial = f"Este é o estudo número {idx + 1}. NÃO faça saudações. Comece DIRETO com uma transição natural tipo 'Agora vamos falar de outro estudo...' ou 'O próximo artigo trata de...'."
     
+    # Define se deve ter despedida no final
+    if is_last:
+        contexto_final = "Este é o ÚLTIMO estudo do episódio. Após discutir o estudo, FINALIZE o podcast com uma despedida calorosa. Agradeça os ouvintes e diga 'até a próxima!'"
+    else:
+        contexto_final = "NÃO finalize o podcast. Deixe a conversa aberta para o próximo estudo."
+    
     prompt = f"""
 Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
 
@@ -243,6 +249,7 @@ Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo es
 REGRAS OBRIGATÓRIAS:
 - NUNCA invente dados, números ou resultados que não estejam no resumo
 - {contexto_inicial}
+- {contexto_final}
 - NÃO use saudações como "Olá", "Oi", "Bem-vindos" em NENHUMA fala
 - NÃO se apresente ou reapresente
 - Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos
@@ -721,6 +728,9 @@ def rodar_boletim():
         "Os resumos abaixo são traduções literais do PubMed.\n\n"
     )
     roteiros_audio = []
+    
+    # Primeiro, coleta todos os artigos relevantes
+    todos_artigos_relevantes = []
 
     for tema, query in CONSULTAS_DETALHADAS.items():
         boletim_detalhado += f"## {tema}\n\n"
@@ -780,8 +790,24 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
 
 """
             primeiro_autor = art['autores'][0] if art['autores'] else "Autor não identificado"
-            roteiro = resumo_para_podcast(art['titulo'], resumo_traduzido, primeiro_autor, idx=len(roteiros_audio))
-            roteiros_audio.append(roteiro)
+            todos_artigos_relevantes.append({
+                'titulo': art['titulo'],
+                'resumo_traduzido': resumo_traduzido,
+                'primeiro_autor': primeiro_autor
+            })
+    
+    # Agora gera os roteiros, sabendo qual é o último
+    total_artigos = len(todos_artigos_relevantes)
+    for idx, artigo_info in enumerate(todos_artigos_relevantes):
+        is_last = (idx == total_artigos - 1)
+        roteiro = resumo_para_podcast(
+            artigo_info['titulo'], 
+            artigo_info['resumo_traduzido'], 
+            artigo_info['primeiro_autor'], 
+            idx=idx,
+            is_last=is_last
+        )
+        roteiros_audio.append(roteiro)
 
     boletim_detalhado += "\nCompartilhe com colegas. RevaCast Pesquisa Detalhada!"
 
