@@ -96,27 +96,18 @@ if ELEVENLABS_API_KEY:
 
 def buscar_ids(query):
     """
-    Busca TODOS os IDs no PubMed para uma query,
-    apenas para a semana COMPLETA de sábado a sexta imediatamente anterior.
+    Busca TODOS os IDs no PubMed para uma query dos últimos 7 dias.
     """
     tz = pytz.timezone("America/Sao_Paulo")
     agora = datetime.now(tz)
+    
+    # Últimos 7 dias a partir de hoje
+    data_final = agora.date()
+    data_inicial = data_final - timedelta(days=7)
 
-    # weekday(): segunda=0 ... sexta=4 ... sábado=5 ... domingo=6
-    # Queremos a ÚLTIMA sexta-feira de semana completa (sempre no passado).
-    dias_retroceder = (agora.weekday() - 4) % 7
-    if dias_retroceder == 0:
-        # se hoje já é sexta, voltamos 7 dias para pegar a sexta anterior
-        dias_retroceder = 7
-
-    ultima_sexta = (agora - timedelta(days=dias_retroceder)).date()
-    # TESTE: Aumentando para 14 dias (2 semanas) para garantir artigos
-    sabado_anterior = ultima_sexta - timedelta(days=13)
-
-    mindate = sabado_anterior.strftime("%Y/%m/%d")
-    maxdate = ultima_sexta.strftime("%Y/%m/%d")
-
-    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (sábado a sexta)")
+    mindate = data_inicial.strftime("%Y/%m/%d")
+    maxdate = data_final.strftime("%Y/%m/%d")
+    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (últimos 7 dias)")
     print(f"Query: {query}")
 
     # 1) Primeiro esearch: só pra saber o COUNT
@@ -210,7 +201,7 @@ def traduzir_resumo(texto):
     """
 
     resposta = client.chat.completions.create(
-        model="gpt-4-turbo",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
@@ -277,7 +268,7 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
 """
 
     resposta = client.chat.completions.create(
-        model="gpt-4-turbo",
+        model="gpt-4o",
         messages=[
             {
                 "role": "system",
@@ -808,6 +799,27 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
             is_last=is_last
         )
         roteiros_audio.append(roteiro)
+    
+    # Salva o roteiro completo como arquivo de texto
+    roteiro_path = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}.txt")
+    with open(roteiro_path, "w", encoding="utf-8") as f:
+        f.write("ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly\n")
+        f.write("=" * 60 + "\n\n")
+        
+        for estudo_idx, dialogo in enumerate(roteiros_audio):
+            f.write(f"\n{'='*60}\n")
+            f.write(f"ESTUDO {estudo_idx + 1}\n")
+            f.write(f"{'='*60}\n\n")
+            
+            if isinstance(dialogo, list):
+                for fala_idx, fala in enumerate(dialogo):
+                    speaker = fala.get('speaker', 'HOST')
+                    text = fala.get('text', '')
+                    f.write(f"{speaker}: {text}\n\n")
+            else:
+                f.write(f"HOST: {dialogo}\n\n")
+    
+    print(f"✅ Roteiro completo salvo como: {roteiro_path}")
 
     boletim_detalhado += "\nCompartilhe com colegas. RevaCast Pesquisa Detalhada!"
 
