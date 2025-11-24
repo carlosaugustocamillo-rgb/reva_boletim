@@ -730,10 +730,10 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                 if not elevenlabs_client:
                     raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
 
-                audio_generator = elevenlabs_client.generate(
+                audio_generator = elevenlabs_client.text_to_speech.convert(
+                    voice_id="pNInz6obpgDQGcFmaJgB",  # Adam voice ID
                     text=parte,
-                    voice="Adam",
-                    model="eleven_multilingual_v2"
+                    model_id="eleven_multilingual_v2"
                 )
                 caminho = os.path.join(AUDIO_DIR, f"bloco_{i+1}.mp3")
                 
