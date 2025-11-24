@@ -33,6 +33,10 @@ from openai import OpenAI
 from pydub import AudioSegment
 from mailchimp_marketing import Client
 from mailchimp_marketing.api_client import ApiClientError
+from dotenv import load_dotenv
+
+# Carrega variáveis de ambiente do arquivo .env
+load_dotenv()
 
 
 # ======================================================================
@@ -70,6 +74,16 @@ MC_REPLY_TO = os.environ["MC_REPLY_TO"]
 mc = Client()
 mc.set_config({"api_key": MC_API_KEY, "server": MC_SERVER})
 
+from elevenlabs.client import ElevenLabs
+
+# ... (imports)
+
+# --- ElevenLabs ---
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+elevenlabs_client = None
+if ELEVENLABS_API_KEY:
+    elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+
 
 # ======================================================================
 # FUNÇÕES AUXILIARES (copiadas/adaptadas do seu Colab)
@@ -91,7 +105,8 @@ def buscar_ids(query):
         dias_retroceder = 7
 
     ultima_sexta = (agora - timedelta(days=dias_retroceder)).date()
-    sabado_anterior = ultima_sexta - timedelta(days=6)
+    # TESTE: Aumentando para 14 dias (2 semanas) para garantir artigos
+    sabado_anterior = ultima_sexta - timedelta(days=13)
 
     mindate = sabado_anterior.strftime("%Y/%m/%d")
     maxdate = ultima_sexta.strftime("%Y/%m/%d")
@@ -712,20 +727,24 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
         audio_paths = []
         for i, parte in enumerate(partes_audio):
             try:
-                response = client.audio.speech.create(
-                    model="tts-1",
-                    voice="alloy",
-                    input=parte
+                if not elevenlabs_client:
+                    raise ValueError("A chave da API ELEVENLABS_API_KEY não foi configurada.")
+
+                audio_generator = elevenlabs_client.generate(
+                    text=parte,
+                    voice="Adam",
+                    model="eleven_multilingual_v2"
                 )
                 caminho = os.path.join(AUDIO_DIR, f"bloco_{i+1}.mp3")
-                # SDK novo: usar .read()
-                audio_bytes = response.read()
+                
                 with open(caminho, "wb") as f:
-                    f.write(audio_bytes)
+                    for chunk in audio_generator:
+                        f.write(chunk)
+                
                 audio_paths.append(caminho)
-                print(f"🎙️ Bloco de áudio {i+1} gerado: {caminho}")
+                print(f"🎙️ Bloco de áudio {i+1} gerado com ElevenLabs: {caminho}")
             except Exception as e:
-                print(f"Erro ao gerar áudio do bloco {i+1}: {e}")
+                print(f"Erro ao gerar áudio do bloco {i+1} com ElevenLabs: {e}")
 
         # Carregar intro
         try:

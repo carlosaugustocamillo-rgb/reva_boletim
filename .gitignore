@@ -7,3 +7,4 @@ __pycache__/
 data/
 audios/
 .DS_Store
+.env_copy_naousar.example

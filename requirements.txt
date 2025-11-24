@@ -6,5 +6,4 @@ pydub
 pytz
 mailchimp-marketing
 requests
-audioop-lts
-openai-agents
+elevenlabs

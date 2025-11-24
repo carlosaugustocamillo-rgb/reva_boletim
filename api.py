@@ -1,10 +1,8 @@
-# api.py
-
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 from boletim_service import rodar_boletim
-from revacast_workflow import WorkflowInput, run_workflow
+from simple_agent import run_agent, AgentInput
 
 app = FastAPI(title="RevaCast Boletim Service")
 
@@ -31,13 +29,19 @@ def rodar_boletim_endpoint():
 
 
 @app.post("/agente-revacast")
-async def agente_revacast(input: WorkflowInput):
+async def agente_revacast(input_data: AgentInput):
     """
-    Endpoint novo, que conversa com o AGENTE.
-
-    - Recebe a mensagem do usuário em input.input_as_text
-    - Roda o workflow do agente
-    - O agente decide quando chamar a tool rodar_boletim(tipo_execucao=...)
-    - A tool dispara o processo local do boletim em background (sem HTTP) e responde rapidamente
+    Endpoint novo, que conversa com o AGENTE Customizado (sem Agent Kit).
+    
+    - Recebe a mensagem do usuário e histórico.
+    - O agente decide se chama a tool rodar_boletim.
+    - Retorna a resposta textual e o histórico atualizado.
     """
-    return await run_workflow(input)
+    try:
+        result = run_agent(input_data)
+        return result
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
