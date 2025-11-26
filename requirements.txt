@@ -2,9 +2,11 @@ openai
 biopython
 pydub
 mailchimp-marketing
+pyaudioop
 python-dotenv
 elevenlabs
 fastapi
 uvicorn
 firebase-admin
 podgen
+google-generativeai

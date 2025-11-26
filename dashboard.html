@@ -112,14 +112,57 @@
         <h1>RevaCast Boletim</h1>
         <p>Clique no botão abaixo para iniciar todo o processo de busca, tradução e geração de áudio.</p>
 
+        <div class="options-container"
+            style="text-align: left; margin-bottom: 20px; background: #f1f1f1; padding: 15px; border-radius: 8px;">
+            <h3 style="margin-top: 0; color: #205776;">O que você deseja executar?</h3>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_resumos" checked> 1. Buscar Artigos e Gerar Resumos (Texto)
+            </label>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_roteiro" checked> 2. Criar Roteiro do Podcast
+            </label>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_audio" checked> 3. Gerar Áudio (ElevenLabs)
+            </label>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_mailchimp" checked> 4. Enviar E-mail (Mailchimp)
+            </label>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_firebase" checked> 5. Upload e RSS (Firebase)
+            </label>
+        </div>
+
         <button id="btnRodar" onclick="rodarBoletim()">
-            🚀 Rodar Processo Completo
+            🚀 Rodar Selecionados
         </button>
 
         <div id="status"></div>
         <div id="log"
             style="text-align: left; margin-top: 20px; font-family: monospace; font-size: 14px; color: #333; background: #f9f9f9; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; display: none;">
         </div>
+
+        <hr style="margin: 40px 0; border: 0; border-top: 1px solid #eee;">
+
+        <h2 style="color: #205776;">Campanhas Temáticas</h2>
+        <p>Gere e-mails educativos com Deep Research e Imagens via DALL-E 3.</p>
+
+        <div style="text-align: left; margin-bottom: 20px;">
+            <label for="temaCampanha" style="display: block; margin-bottom: 8px; font-weight: bold; color: #333;">Tema
+                da Campanha:</label>
+            <input type="text" id="temaCampanha" placeholder="Ex: Exercício e Diabetes Tipo 1..."
+                style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px;">
+        </div>
+
+        <button id="btnCampanha" onclick="criarCampanha()">
+            🎨 Criar Campanha
+        </button>
+
+        <div id="statusCampanha" style="margin-top: 20px; padding: 10px; border-radius: 4px; display: none;"></div>
     </div>
 
     <script>
@@ -127,6 +170,16 @@
             const btn = document.getElementById('btnRodar');
             const statusDiv = document.getElementById('status');
             const logDiv = document.getElementById('log');
+
+            // Lê as opções
+            const resumos = document.getElementById('opt_resumos').checked;
+            const roteiro = document.getElementById('opt_roteiro').checked;
+            const audio = document.getElementById('opt_audio').checked;
+            const mailchimp = document.getElementById('opt_mailchimp').checked;
+            const firebase = document.getElementById('opt_firebase').checked;
+
+            // Monta a URL com query params
+            const url = `/rodar-boletim-stream?resumos=${resumos}&roteiro=${roteiro}&audio=${audio}&mailchimp=${mailchimp}&firebase=${firebase}`;
 
             // Estado de carregamento
             btn.disabled = true;
@@ -138,7 +191,7 @@
             logDiv.style.display = 'block';
             logDiv.innerHTML = ''; // Limpa log anterior
 
-            const evtSource = new EventSource("/rodar-boletim-stream");
+            const evtSource = new EventSource(url);
 
             evtSource.onmessage = function (event) {
                 const data = JSON.parse(event.data);
@@ -167,7 +220,7 @@
                     logDiv.appendChild(logItem);
 
                     btn.disabled = false;
-                    btn.innerHTML = '🚀 Rodar Novamente';
+                    btn.innerHTML = '🚀 Rodar Selecionados';
                 }
                 else if (data.status === 'error') {
                     evtSource.close();
@@ -186,6 +239,58 @@
                 btn.disabled = false;
                 btn.innerHTML = '🚀 Tentar Novamente';
             };
+        }
+
+        async function criarCampanha() {
+            const btn = document.getElementById('btnCampanha');
+            const statusDiv = document.getElementById('statusCampanha');
+            const temaInput = document.getElementById('temaCampanha');
+            const tema = temaInput.value.trim();
+
+            if (!tema) {
+                alert('Por favor, digite um tema para a campanha.');
+                return;
+            }
+
+            // Estado de carregamento
+            btn.disabled = true;
+            btn.innerHTML = 'Gerando... (Isso pode demorar)';
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Pesquisando, gerando imagem e escrevendo...</div>';
+
+            try {
+                const response = await fetch('/criar-campanha', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tema: tema })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    statusDiv.className = 'success';
+                    const result = data.resultado;
+                    statusDiv.innerHTML = `
+                        ✅ <strong>Campanha Criada!</strong><br>
+                        <a href="${result.image}" target="_blank">Ver Imagem Gerada</a><br>
+                        ID Mailchimp: ${result.campaign_id}<br>
+                        <small>Verifique o rascunho no Mailchimp.</small>
+                    `;
+                } else {
+                    throw new Error(data.erro || 'Erro desconhecido');
+                }
+
+            } catch (error) {
+                console.error(error);
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🎨 Criar Campanha';
+            }
         }
     </script>
 </body>
