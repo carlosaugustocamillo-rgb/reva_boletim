@@ -80,7 +80,7 @@ from elevenlabs.client import ElevenLabs
 
 # --- ElevenLabs ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "uu3jBatEwHsOkmMzZdNX")
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "WWL28Z00upcD5SGFqY2n")
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
@@ -101,13 +101,13 @@ def buscar_ids(query):
     tz = pytz.timezone("America/Sao_Paulo")
     agora = datetime.now(tz)
     
-    # Últimos 14 dias a partir de hoje (TEMPORÁRIO PARA TESTES)
+    # Últimos 7 dias (Sábado a Sexta), assumindo que hoje é Sexta-feira
     data_final = agora.date()
-    data_inicial = data_final - timedelta(days=14)
+    data_inicial = data_final - timedelta(days=6)
 
     mindate = data_inicial.strftime("%Y/%m/%d")
     maxdate = data_final.strftime("%Y/%m/%d")
-    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (últimos 14 dias - TESTE)")
+    print(f"🔎 Buscando artigos de {mindate} até {maxdate} (Sábado a Sexta - 7 dias)")
     print(f"Query: {query}")
 
     # 1) Primeiro esearch: só pra saber o COUNT
@@ -233,22 +233,34 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False)
         contexto_final = "NÃO finalize o podcast. Deixe a conversa aberta para o próximo estudo."
     
     prompt = f"""
-Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
+Você é um roteirista sênior do RevaCast Weekly. Seu objetivo é transformar um resumo científico em uma CONVERSA EXTREMAMENTE NATURAL e ENGAJANTE, no estilo "NotebookLM Audio Overview".
 
-Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo este estudo científico.
+O tom deve ser de dois colegas/amigos apaixonados por ciência conversando no corredor ou num café. Nada de "palestra" ou "leitura de texto".
 
-REGRAS OBRIGATÓRIAS:
-- NUNCA invente dados, números ou resultados que não estejam no resumo
+PERSONAGENS:
+- HOST: Especialista, entusiasta, traz a novidade com energia ("Cara, olha que incrível isso aqui").
+- COHOST: Curioso, inteligente, reage com emoção ("Sério?", "Não acredito!", "Uau"), faz perguntas pertinentes e tenta conectar os pontos.
+
+REGRAS DE ESTILO (CRUCIAIS):
+1. USE LINGUAGEM FALADA REAL: Use marcadores de discurso ("Então", "Sabe...", "Olha só", "Pois é").
+2. REAÇÕES GENUÍNAS: Se o resultado for bom, o COHOST deve ficar impressionado. Se for polêmico, deve ficar surpreso.
+3. FLUIDEZ: Uma fala deve "enganchar" na outra. Evite perguntas e respostas robóticas (tipo ping-pong).
+4. SEM FORMALIDADES: Evite "O estudo concluiu que". Prefira "O que eles descobriram foi...", "O mais louco é que...".
+5. EXPLICAR O "PORQUÊ": Não jogue apenas dados. Explique o impacto prático disso.
+
+REGRAS DE SEGURANÇA (CRÍTICO - RISCO DE ALUCINAÇÃO):
+- CRIATIVIDADE APENAS NO TOM E NA CONVERSA.
+- RIGOR ABSOLUTO NOS DADOS: Números, p-values, tamanhos de amostra e resultados devem ser COPIADOS EXATAMENTE do resumo.
+- PROIBIDO INVENTAR: Se o resumo não diz "melhorou 20%", NÃO invente "melhorou muito" ou "20%". Diga apenas "houve melhora significativa".
+- Se não souber um dado, o COHOST deve perguntar e o HOST deve dizer "O resumo não especifica esse detalhe".
+
+REGRAS TÉCNICAS:
 - {contexto_inicial}
 - {contexto_final}
-- NÃO use saudações como "Olá", "Oi", "Bem-vindos" em NENHUMA fala
-- NÃO se apresente ou reapresente
-- Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos
-- O HOST apresenta o estudo, o COHOST faz perguntas e comenta
-- Mantenha informal mas profissional
-- De 5 a 8 falas no total (alternando entre HOST e COHOST)
-- Cada fala deve ter 1-3 frases curtas e diretas
-- Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1)
+- SEM SAUDAÇÕES ("Olá", "Bem-vindos").
+- SEM APRESENTAÇÕES ("Eu sou o Guto").
+- Duração: 6 a 10 trocas de fala (para dar tempo de aprofundar um pouco).
+- Use as abreviações formatadas: D.P.O.C., V.E.F.1, I.M.C.
 
 Contexto do estudo:
 Título: {titulo}
@@ -258,12 +270,10 @@ Resumo traduzido:
 {resumo_pt}
 
 FORMATO DE RETORNO (JSON array):
-Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
 [
-  {{"speaker": "HOST", "text": "Vamos falar sobre um estudo interessante..."}},
-  {{"speaker": "COHOST", "text": "Legal! O que eles investigaram?"}},
-  {{"speaker": "HOST", "text": "Eles analisaram..."}},
-  {{"speaker": "COHOST", "text": "E quais foram os resultados?"}}
+  {{"speaker": "HOST", "text": "Cara, você não vai acreditar nesse estudo sobre DPOC que saiu..."}},
+  {{"speaker": "COHOST", "text": "Sério? O que tem de novo? É sobre reabilitação?"}},
+  {{"speaker": "HOST", "text": "Exatamente! Eles pegaram um grupo enorme e..."}}
 ]
 """
 
@@ -276,7 +286,7 @@ Retorne APENAS um array JSON válido, sem texto adicional. Exemplo:
             },
             {"role": "user", "content": prompt}
         ],
-        temperature=0.7,
+        temperature=0.85,
     )
     
     import json
@@ -414,35 +424,23 @@ def formatar_artigo_para_html(artigo, resumo_traduzido):
 # ======================================================================
 
 CONSULTAS_PRINCIPAIS = [
-    'DPOC: ("pulmonary rehabilitation"[tiab] OR "Pulmonary Rehabilitation"[Mesh]) AND ("Pulmonary Disease, Chronic Obstructive"[Mesh] OR COPD[tiab] OR "chronic obstructive pulmonary disease"[tiab])',
-    'Doenças Intersticiais: ("pulmonary rehabilitation"[tiab] OR "Pulmonary Rehabilitation"[Mesh]) AND ("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "interstitial lung diseases"[tiab] OR ILD[tiab])',
-    'Asma: ("Exercise Therapy"[Mesh] OR "exercise training"[tiab] OR "pulmonary rehabilitation"[tiab]) AND ("Asthma"[Mesh] OR asthma[tiab])',
-    'Fibrose Cística: ("Exercise Therapy"[Mesh] OR "exercise training"[tiab] OR "pulmonary rehabilitation"[tiab]) AND ("Cystic Fibrosis"[Mesh] OR "cystic fibrosis"[tiab])',
-    'Câncer: ("exercise training"[tiab]) AND ("Neoplasms"[Mesh] OR cancer[tiab] OR cancers[tiab])'
+    'DPOC: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Pulmonary Disease, Chronic Obstructive"[Mesh] OR COPD[tiab] OR "chronic obstructive pulmonary disease"[tiab])',
+    'Doenças Intersticiais: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "interstitial lung diseases"[tiab] OR ILD[tiab])',
+    'Asma: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Asthma"[Mesh] OR asthma[tiab])',
+    'Fibrose Cística: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Cystic Fibrosis"[Mesh] OR "cystic fibrosis"[tiab])',
+    'Câncer: ("exercise"[tiab]) AND ("Neoplasms"[Mesh] OR cancer[tiab] OR cancers[tiab])'
 ]
 
 CONSULTAS_DETALHADAS = {
     "DPOC": (
         '('
-        '("Pulmonary Disease, Chronic Obstructive"[Mesh] '
-        ' OR "chronic obstructive pulmonary disease"[tiab] '
-        ' OR COPD[tiab])'
+        '("Pulmonary Disease, Chronic Obstructive"[Mesh] OR COPD[tiab] OR "chronic obstructive pulmonary disease"[tiab])'
         ' AND '
-        '('
-        ' "Pulmonary Rehabilitation"[Mesh]'
-        ' OR "pulmonary rehabilitation"[tiab]'
-        ' OR "respiratory rehabilitation"[tiab]'
-        ' OR "Exercise Therapy"[Mesh]'
-        ' OR "Exercise"[Mesh]'
-        ' OR "exercise training"[tiab]'
-        ' OR "physical training"[tiab]'
-        ' OR (exercis*[tiab] AND training[tiab])'
-        ')'
+        '("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab])'
         ' AND '
         '('
         ' randomized controlled trial[pt]'
         ' OR controlled clinical trial[pt]'
-        ' OR clinical trial[pt]'
         ' OR meta-analysis[pt]'
         ' OR systematic[sb]'
         ' OR review[pt]'
@@ -453,25 +451,13 @@ CONSULTAS_DETALHADAS = {
 
     "Asma": (
         '('
-        '("Asthma"[Mesh] '
-        ' OR asthma[tiab])'
+        '("Asthma"[Mesh] OR asthma[tiab])'
         ' AND '
-        '('
-        ' "Pulmonary Rehabilitation"[Mesh]'
-        ' OR "pulmonary rehabilitation"[tiab]'
-        ' OR "Exercise Therapy"[Mesh]'
-        ' OR "Exercise"[Mesh]'
-        ' OR "exercise training"[tiab]'
-        ' OR "physical training"[tiab]'
-        ' OR (exercis*[tiab] AND training[tiab])'
-        ' OR "breathing exercises"[tiab]'
-        ' OR "respiratory muscle training"[tiab]'
-        ')'
+        '("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab])'
         ' AND '
         '('
         ' randomized controlled trial[pt]'
         ' OR controlled clinical trial[pt]'
-        ' OR clinical trial[pt]'
         ' OR meta-analysis[pt]'
         ' OR systematic[sb]'
         ' OR review[pt]'
@@ -482,25 +468,13 @@ CONSULTAS_DETALHADAS = {
 
     "Fibrose Cística": (
         '('
-        '("Cystic Fibrosis"[Mesh] '
-        ' OR "cystic fibrosis"[tiab])'
+        '("Cystic Fibrosis"[Mesh] OR "cystic fibrosis"[tiab])'
         ' AND '
-        '('
-        ' "Pulmonary Rehabilitation"[Mesh]'
-        ' OR "pulmonary rehabilitation"[tiab]'
-        ' OR "Exercise Therapy"[Mesh]'
-        ' OR "Exercise"[Mesh]'
-        ' OR "exercise training"[tiab]'
-        ' OR "physical training"[tiab]'
-        ' OR (exercis*[tiab] AND training[tiab])'
-        ' OR "aerobic training"[tiab]'
-        ' OR "strength training"[tiab]'
-        ')'
+        '("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab])'
         ' AND '
         '('
         ' randomized controlled trial[pt]'
         ' OR controlled clinical trial[pt]'
-        ' OR clinical trial[pt]'
         ' OR meta-analysis[pt]'
         ' OR systematic[sb]'
         ' OR review[pt]'
@@ -511,25 +485,13 @@ CONSULTAS_DETALHADAS = {
 
     "Doenças Intersticiais": (
         '('
-        '("Lung Diseases, Interstitial"[Mesh] '
-        ' OR "interstitial lung disease"[tiab]'
-        ' OR "interstitial lung diseases"[tiab]'
-        ' OR ILD[tiab])'
+        '("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "interstitial lung diseases"[tiab] OR ILD[tiab])'
         ' AND '
-        '('
-        ' "Pulmonary Rehabilitation"[Mesh]'
-        ' OR "pulmonary rehabilitation"[tiab]'
-        ' OR "Exercise Therapy"[Mesh]'
-        ' OR "Exercise"[Mesh]'
-        ' OR "exercise training"[tiab]'
-        ' OR "physical training"[tiab]'
-        ' OR (exercis*[tiab] AND training[tiab])'
-        ')'
+        '("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab])'
         ' AND '
         '('
         ' randomized controlled trial[pt]'
         ' OR controlled clinical trial[pt]'
-        ' OR clinical trial[pt]'
         ' OR meta-analysis[pt]'
         ' OR systematic[sb]'
         ' OR review[pt]'
@@ -540,11 +502,9 @@ CONSULTAS_DETALHADAS = {
 
     "Câncer": (
         '('
-        '("cancer"[tiab])'
+        '("Neoplasms"[Mesh] OR cancer[tiab] OR cancers[tiab])'
         ' AND '
-        '('
-        ' "exercise training"[tiab]'
-        ')'
+        '("exercise"[tiab])'
         ' AND '
         '('
         ' randomized controlled trial[pt]'
@@ -623,9 +583,9 @@ def rodar_boletim():
     - Roteiro + áudio do podcast
     - Cria e agenda campanha no Mailchimp para sábado 7:30 (Brasília)
 
-    Retorna um dicionário com informações finais (para o Agent Builder).
+    Retorna um gerador que emite mensagens de status e, por fim, o dicionário de resultado.
     """
-    print("🚀 Iniciando pipeline do boletim científico...")
+    yield "🚀 Iniciando pipeline do boletim científico..."
 
     hoje = datetime.today().strftime('%Y-%m-%d')
 
@@ -638,6 +598,8 @@ def rodar_boletim():
     # ------------------------------------------------------------------
     # 1) BOLETIM PRINCIPAL
     # ------------------------------------------------------------------
+    yield "🔎 1/5: Buscando artigos no PubMed e gerando Boletim Principal..."
+    
     boletim_final = (
         "Os dados a seguir mostram os estudos publicados no PubMed na última semana "
         "(sábado a sexta), com os resumos traduzidos literalmente do inglês para o português.\n\n"
@@ -650,6 +612,7 @@ def rodar_boletim():
 
     for consulta in CONSULTAS_PRINCIPAIS:
         titulo_secao, query = consulta.split(": ", 1)
+        yield f"   - Processando seção: {titulo_secao}..."
         ids = buscar_ids(query)
         artigos = buscar_info_estruturada(ids)
         artigos_unicos = [a for a in artigos if a['pmid'] not in artigos_vistos]
@@ -713,6 +676,8 @@ def rodar_boletim():
     # ------------------------------------------------------------------
     # 2) BOLETIM DETALHADO + ROTEIROS
     # ------------------------------------------------------------------
+    yield "📝 2/5: Gerando Boletim Detalhado e Roteiros de Podcast..."
+    
     boletim_detalhado = (
         "Boletim detalhado com os estudos mais relevantes sobre exercício em diferentes "
         "condições crônicas, publicados na última semana (sábado a sexta). "
@@ -791,6 +756,7 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     total_artigos = len(todos_artigos_relevantes)
     for idx, artigo_info in enumerate(todos_artigos_relevantes):
         is_last = (idx == total_artigos - 1)
+        yield f"   - Gerando roteiro para estudo {idx+1}/{total_artigos}..."
         roteiro = resumo_para_podcast(
             artigo_info['titulo'], 
             artigo_info['resumo_traduzido'], 
@@ -830,7 +796,15 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     # ------------------------------------------------------------------
     # 3) GERAÇÃO DO ÁUDIO EM FORMATO DE CONVERSA (se houver roteiros)
     # ------------------------------------------------------------------
-    if roteiros_audio:
+    yield "🎙️ 3/5: Verificando áudio..."
+    
+    total_chars_elevenlabs = 0
+    
+    if os.path.exists(episodio_path):
+        yield f"⚠️ Áudio já encontrado para hoje! Pulando geração do ElevenLabs para economizar seus créditos."
+        print(f"Áudio existente mantido: {episodio_path}")
+    elif roteiros_audio:
+        yield "🎙️ Gerando Áudio (ElevenLabs) - Isso pode demorar..."
         audio_paths = []
         
         # Para cada estudo, gerar o diálogo completo como um único áudio conversacional
@@ -858,6 +832,7 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                 
                 # Gera um único áudio conversacional para todo o estudo
                 # Alternando automaticamente entre as vozes
+                yield f"   - Sintetizando vozes para estudo {estudo_idx+1}..."
                 print(f"🎙️ Gerando áudio conversacional para estudo {estudo_idx+1}...")
                 
                 # Como a API do ElevenLabs não tem suporte nativo para conversação com múltiplas vozes
@@ -870,22 +845,29 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                     if not text:
                         continue
                     
-                    # Escolhe a voz baseado no speaker
-                    voice_id = ELEVEN_VOICE_ID_HOST if speaker == 'HOST' else ELEVEN_VOICE_ID_COHOST
+                    # Contabiliza caracteres para estimativa de custo
+                    total_chars_elevenlabs += len(text)
                     
-                    print(f"   → {speaker}: usando voice_id = {voice_id}")
+                    # Escolhe a voz baseado no speaker
+                    # Garante que espaços extras não atrapalhem a verificação
+                    speaker_clean = speaker.strip().upper()
+                    voice_id = ELEVEN_VOICE_ID_HOST if speaker_clean == 'HOST' else ELEVEN_VOICE_ID_COHOST
+                    
+                    print(f"   → {speaker} ({len(text)} chars): usando voice_id = {voice_id}")
                     
                     from elevenlabs import VoiceSettings
                     
+                    # Trocando de volta para o multilingual_v2 para garantir a fidelidade da voz (HOST correto)
+                    # Ajustando configurações para mais entonação e velocidade natural
                     audio_generator = elevenlabs_client.text_to_speech.convert(
                         voice_id=voice_id,
                         text=text,
                         model_id="eleven_multilingual_v2",
                         voice_settings=VoiceSettings(
-                            stability=0.75,  # Alta estabilidade para consistência
-                            similarity_boost=0.85,  # Alta similaridade com a voz original
-                            style=0.0,  # Sem estilo adicional
-                            use_speaker_boost=True  # Reforça a voz do speaker
+                            stability=0.50,  # Reduzido: permite mais variação de tom e velocidade (menos robótico)
+                            similarity_boost=0.80,  # Mantém a identidade da voz
+                            style=0.55,  # Aumentado: adiciona a "entonação" e expressividade pedida
+                            use_speaker_boost=True
                         )
                     )
                     
@@ -923,6 +905,7 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
                 print(f"Erro ao gerar áudio do estudo {estudo_idx+1}: {e}")
 
         # Carregar intro
+        yield "   - Montando episódio final com intro..."
         try:
             intro_audio = AudioSegment.from_file(INTRO_PATH, format="mp3")
         except Exception as e:
@@ -939,6 +922,7 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
 
         episodio.export(episodio_path, format="mp3")
         print(f"\n🎧 Episódio final salvo em: {episodio_path}")
+        yield f"💰 Consumo ElevenLabs: {total_chars_elevenlabs} caracteres usados neste episódio."
     else:
         print("Nenhum roteiro para gerar áudio.")
         episodio_path = None
@@ -946,6 +930,8 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     # ------------------------------------------------------------------
     # 4) MAILCHIMP – CRIAR E AGENDAR CAMPANHA
     # ------------------------------------------------------------------
+    yield "📧 4/5: Criando e agendando campanha no Mailchimp..."
+    
     assunto = "Boletim Científico Semanal | RevaCast"
 
     with open(boletim_path, "r", encoding="utf-8") as f:
@@ -1022,7 +1008,49 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
         mailchimp_error = error_detail
 
     # ------------------------------------------------------------------
-    # 5) RETORNO PARA O AGENTE / API
+    # 5) UPLOAD E RSS (FIREBASE)
+    # ------------------------------------------------------------------
+    yield "☁️ 5/5: Fazendo upload para Firebase e atualizando RSS..."
+    
+    rss_url = None
+    audio_url = None
+    
+    if episodio_path and os.path.exists(episodio_path):
+        try:
+            from firebase_service import upload_file, update_podcast_feed
+            
+            # 1. Upload do Áudio
+            filename = os.path.basename(episodio_path)
+            audio_url = upload_file(episodio_path, f"episodios/{filename}")
+            
+            if audio_url:
+                # 2. Metadados para o RSS
+                audio_segment = AudioSegment.from_file(episodio_path)
+                duration_sec = len(audio_segment) / 1000.0
+                file_size = os.path.getsize(episodio_path)
+                
+                tz = pytz.timezone("America/Sao_Paulo")
+                pub_date = datetime.now(tz)
+                
+                # Título e Descrição do episódio
+                titulo_ep = f"RevaCast Weekly - {hoje}"
+                descricao_ep = f"Resumo semanal dos artigos científicos. Confira o boletim completo em nosso site."
+                
+                # 3. Atualiza RSS
+                rss_url = update_podcast_feed(
+                    audio_url, 
+                    titulo_ep, 
+                    descricao_ep, 
+                    pub_date, 
+                    duration_sec, 
+                    file_size
+                )
+                print(f"📡 Feed RSS atualizado: {rss_url}")
+        except Exception as e:
+            print(f"❌ Erro na etapa de Upload/RSS: {e}")
+
+    # ------------------------------------------------------------------
+    # 6) RETORNO PARA O AGENTE / API
     # ------------------------------------------------------------------
     resultado = {
         "data_referencia": hoje,
@@ -1030,6 +1058,8 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
         "revisao_path": revisao_path,
         "boletim_detalhado_path": boletim_detalhado_path,
         "episodio_path": episodio_path,
+        "audio_url": audio_url,
+        "rss_url": rss_url,
         "mailchimp": {
             "campaign_id": campaign_id,
             "status": mailchimp_status,
@@ -1039,7 +1069,7 @@ Falha na tradução automática do resumo ({e}). Recomenda-se revisão manual.
     }
 
     print("✅ Pipeline do boletim finalizado.")
-    return resultado
+    yield resultado
 
 
 # Permite testar localmente: python boletim_service.py

@@ -1,10 +1,10 @@
-fastapi
-uvicorn[standard]
 openai
 biopython
 pydub
-pytz
 mailchimp-marketing
-requests
+python-dotenv
 elevenlabs
-audioop-lts
+fastapi
+uvicorn
+firebase-admin
+podgen

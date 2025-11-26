@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel RevaCast</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .container {
+            background-color: white;
+            padding: 2rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            text-align: center;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        h1 {
+            color: #205776;
+            margin-bottom: 1.5rem;
+        }
+
+        p {
+            color: #666;
+            margin-bottom: 2rem;
+        }
+
+        button {
+            background-color: #205776;
+            color: white;
+            border: none;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            width: 100%;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #163e54;
+        }
+
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            display: none;
+        }
+
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            color: #205776;
+            font-style: italic;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #205776;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>RevaCast Boletim</h1>
+        <p>Clique no botão abaixo para iniciar todo o processo de busca, tradução e geração de áudio.</p>
+
+        <button id="btnRodar" onclick="rodarBoletim()">
+            🚀 Rodar Processo Completo
+        </button>
+
+        <div id="status"></div>
+        <div id="log"
+            style="text-align: left; margin-top: 20px; font-family: monospace; font-size: 14px; color: #333; background: #f9f9f9; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; display: none;">
+        </div>
+    </div>
+
+    <script>
+        function rodarBoletim() {
+            const btn = document.getElementById('btnRodar');
+            const statusDiv = document.getElementById('status');
+            const logDiv = document.getElementById('log');
+
+            // Estado de carregamento
+            btn.disabled = true;
+            btn.innerHTML = 'Processando...';
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Iniciando conexão...</div>';
+
+            logDiv.style.display = 'block';
+            logDiv.innerHTML = ''; // Limpa log anterior
+
+            const evtSource = new EventSource("/rodar-boletim-stream");
+
+            evtSource.onmessage = function (event) {
+                const data = JSON.parse(event.data);
+
+                if (data.status === 'progress') {
+                    // Atualiza status principal e adiciona ao log
+                    statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">' + data.message + '</div>';
+
+                    const logItem = document.createElement('div');
+                    logItem.style.marginBottom = '5px';
+                    logItem.style.borderBottom = '1px solid #eee';
+                    logItem.style.paddingBottom = '2px';
+                    logItem.innerText = new Date().toLocaleTimeString() + ' - ' + data.message;
+                    logDiv.appendChild(logItem);
+                    logDiv.scrollTop = logDiv.scrollHeight; // Auto-scroll
+                }
+                else if (data.status === 'done') {
+                    evtSource.close();
+                    statusDiv.className = 'success';
+                    statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado com sucesso!';
+
+                    const logItem = document.createElement('div');
+                    logItem.style.color = 'green';
+                    logItem.style.fontWeight = 'bold';
+                    logItem.innerText = 'FINALIZADO: ' + JSON.stringify(data.result, null, 2);
+                    logDiv.appendChild(logItem);
+
+                    btn.disabled = false;
+                    btn.innerHTML = '🚀 Rodar Novamente';
+                }
+                else if (data.status === 'error') {
+                    evtSource.close();
+                    statusDiv.className = 'error';
+                    statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + data.message;
+                    btn.disabled = false;
+                    btn.innerHTML = '🚀 Tentar Novamente';
+                }
+            };
+
+            evtSource.onerror = function (err) {
+                console.error("EventSource failed:", err);
+                evtSource.close();
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Erro de Conexão:</strong><br>A conexão com o servidor foi perdida.';
+                btn.disabled = false;
+                btn.innerHTML = '🚀 Tentar Novamente';
+            };
+        }
+    </script>
+</body>
+
+</html>
