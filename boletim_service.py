@@ -641,8 +641,10 @@ def rodar_boletim(opcoes=None):
         
         # --- BOLETIM PRINCIPAL ---
         boletim_final = (
+            '<p style="font-family: Helvetica, Arial, sans-serif; color: #333; line-height: 1.5;">'
             "Os dados a seguir mostram os estudos publicados no PubMed na última semana "
-            "(sábado a sexta), com os resumos traduzidos literalmente do inglês para o português.\n\n"
+            "(sábado a sexta), com os resumos traduzidos literalmente do inglês para o português."
+            "</p>"
         )
         boletim_revisao = (
             "Os artigos a seguir foram encontrados no PubMed, mas não continham resumo disponível "
@@ -700,7 +702,12 @@ def rodar_boletim(opcoes=None):
                         + f"\nMotivo da falha: Erro na chamada da API de tradução - {e}\n\n---\n\n"
                     )
 
-        boletim_final += "\nEspero que estas traduções sejam úteis. Siga nosso podcast para mais!\nAbraços,\nGuto"
+        boletim_final += (
+            '<p style="font-family: Helvetica, Arial, sans-serif; color: #333; line-height: 1.5; margin-top: 30px;">'
+            "Espero que estas traduções sejam úteis. Siga nosso podcast para mais!<br>"
+            "Abraços,<br>Guto"
+            "</p>"
+        )
 
         with open(boletim_path, "w", encoding="utf-8") as f:
             f.write(boletim_final)
@@ -899,8 +906,8 @@ def rodar_boletim(opcoes=None):
             try:
                 assunto = "Boletim Científico Semanal | RevaCast"
                 with open(boletim_path, "r", encoding="utf-8") as f: conteudo_boletim = f.read()
-                conteudo_boletim = conteudo_boletim.replace('"', '&quot;').replace("'", '&apos;').replace("\n\n", "</p><p>").replace("\n", "<br>")
-                html_final_completo = TEMPLATE_HTML_BASE.format(conteudo_aqui=f"<p>{conteudo_boletim}</p>")
+                # O conteúdo já está em HTML formatado, não precisamos de replacements destrutivos
+                html_final_completo = TEMPLATE_HTML_BASE.format(conteudo_aqui=conteudo_boletim)
 
                 campaign = mc.campaigns.create({
                     "type": "regular", "recipients": {"list_id": MC_LIST_ID},
