@@ -12,6 +12,7 @@ from pydantic import BaseModel
 class CampanhaInput(BaseModel):
     tema: str
 
+# Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
 
 # Configuração de CORS para permitir requisições do frontend (localhost:3000, etc)
