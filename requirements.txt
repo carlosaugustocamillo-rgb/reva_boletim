@@ -2,6 +2,7 @@ openai
 biopython
 pydub
 mailchimp-marketing
+pyaudioop
 python-dotenv
 elevenlabs
 fastapi
