@@ -264,8 +264,8 @@ Você é um roteirista sênior do RevaCast Weekly. Seu objetivo é transformar u
 O tom deve ser de dois colegas/amigos apaixonados por ciência conversando no corredor ou num café. Nada de "palestra" ou "leitura de texto".
 
 PERSONAGENS:
-- HOST: Especialista, entusiasta, traz a novidade com energia ("Cara, olha que incrível isso aqui").
-- COHOST: Curioso, inteligente, reage com emoção ("Sério?", "Não acredito!", "Uau"), faz perguntas pertinentes e tenta conectar os pontos.
+- HOST (IVO): Especialista, entusiasta, traz a novidade com energia ("Cara, olha que incrível isso aqui"). Voz masculina.
+- COHOST (MANU): Curiosa, inteligente, reage com emoção ("Sério?", "Não acredito!", "Uau"), faz perguntas pertinentes e tenta conectar os pontos. Voz feminina.
 
 REGRAS DE ESTILO (CRUCIAIS):
 1. USE LINGUAGEM FALADA REAL: Use marcadores de discurso ("Então", "Sabe...", "Olha só", "Pois é").
@@ -848,15 +848,31 @@ def rodar_boletim(opcoes=None):
                         speaker_clean = fala.get('speaker', 'HOST').strip().upper()
                         voice_id = ELEVEN_VOICE_ID_HOST if speaker_clean == 'HOST' else ELEVEN_VOICE_ID_COHOST
                         
+                        # Configurações ajustadas para fala mais rápida/dinâmica
                         audio_generator = elevenlabs_client.text_to_speech.convert(
                             voice_id=voice_id,
                             text=text,
                             model_id="eleven_multilingual_v2",
-                            voice_settings=VoiceSettings(stability=0.50, similarity_boost=0.80, style=0.55, use_speaker_boost=True)
+                            voice_settings=VoiceSettings(
+                                stability=0.40,       # Reduzido para ser mais solto/rápido
+                                similarity_boost=0.80, 
+                                style=0.60,           # Aumentado para mais expressividade
+                                use_speaker_boost=True
+                            )
                         )
                         caminho_temp = os.path.join(AUDIO_DIR, f"temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3")
                         with open(caminho_temp, "wb") as f:
                             for chunk in audio_generator: f.write(chunk)
+                        
+                        # Acelerar áudio em 15% (1.15x) usando pydub
+                        try:
+                            audio_segment = AudioSegment.from_file(caminho_temp)
+                            # Speedup simples (pode alterar levemente o pitch, mas mantém qualidade aceitável)
+                            audio_rapido = audio_segment.speedup(playback_speed=1.15)
+                            audio_rapido.export(caminho_temp, format="mp3")
+                        except Exception as e_speed:
+                            print(f"⚠️ Erro ao acelerar áudio: {e_speed}. Usando velocidade normal.")
+
                         estudo_audios.append(caminho_temp)
                     
                     if estudo_audios:
