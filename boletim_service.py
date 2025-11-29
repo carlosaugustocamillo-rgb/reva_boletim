@@ -1013,19 +1013,8 @@ def rodar_boletim(opcoes=None):
                     yield "❌ Nenhum arquivo parcial encontrado para resgate."
             except Exception as e_rescue:
                 yield f"❌ Erro no resgate: {e_rescue}"
-                    rss_url = update_podcast_feed(
-                        audio_url, f"RevaCast Weekly - {hoje}", 
-                        "Resumo semanal dos artigos científicos.", 
-                        datetime.now(pytz.timezone("America/Sao_Paulo")), 
-                        len(audio_segment)/1000.0, os.path.getsize(episodio_path)
-                    )
-                    yield f"📡 RSS Atualizado: {rss_url}"
-            except Exception as e:
-                yield f"❌ Erro Firebase: {e}"
-        else:
-            yield "⚠️ Sem áudio para upload."
-    else:
-        yield "⏭️ Pulando Firebase."
+
+
 
     # ------------------------------------------------------------------
     # 6) RETORNO
