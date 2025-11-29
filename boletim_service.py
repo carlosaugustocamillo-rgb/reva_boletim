@@ -89,7 +89,7 @@ from elevenlabs import VoiceSettings
 
 # --- ElevenLabs ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "WWL28Z00upcD5SGFqY2n")
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
