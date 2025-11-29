@@ -224,3 +224,46 @@ def teste_audio_curto():
             "message": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+@app.get("/rescue-audio")
+def rescue_audio():
+    """
+    Tenta encontrar arquivos MP3 na pasta data/ e fazer upload manual para o Firebase.
+    Útil se o processo falhou logo após gerar o áudio mas antes de subir.
+    """
+    try:
+        import os
+        import glob
+        from firebase_service import upload_file
+        
+        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        mp3_files = glob.glob(os.path.join(base_dir, "*.mp3"))
+        
+        results = []
+        
+        if not mp3_files:
+            return {"status": "warning", "message": "Nenhum arquivo MP3 encontrado na pasta data/."}
+            
+        for mp3_path in mp3_files:
+            filename = os.path.basename(mp3_path)
+            # Evita subir a intro se ela estiver lá
+            if "intro" in filename: continue
+            
+            destination = f"resgate/{filename}"
+            url = upload_file(mp3_path, destination)
+            results.append({"file": filename, "url": url})
+            
+        return {
+            "status": "success",
+            "message": f"{len(results)} arquivos resgatados.",
+            "files": results
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }

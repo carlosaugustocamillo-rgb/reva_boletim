@@ -820,6 +820,13 @@ def rodar_boletim(opcoes=None):
     # ------------------------------------------------------------------
     # 3) GERAÇÃO DO ÁUDIO
     # ------------------------------------------------------------------
+    # Safety check: Se Firebase estiver ativado mas sem credenciais, não gera áudio
+    if opcoes.get('audio') and opcoes.get('firebase'):
+        from firebase_service import is_firebase_ready
+        if not is_firebase_ready():
+            yield "⚠️ AVISO: Firebase não configurado (falta credenciais). Desativando áudio para economizar créditos."
+            opcoes['audio'] = False
+
     if opcoes.get('audio'):
         yield "🎙️ 3/5: Verificando áudio..."
         total_chars_elevenlabs = 0
@@ -907,6 +914,7 @@ def rodar_boletim(opcoes=None):
                     yield f"💰 Consumo ElevenLabs: {total_chars_elevenlabs} chars."
                 except Exception as e:
                     print(f"Erro mixagem: {e}")
+                    yield f"❌ Erro ao montar episódio: {e}"
         else:
             yield "⚠️ Sem roteiro novo para gerar áudio."
     else:
@@ -964,6 +972,8 @@ def rodar_boletim(opcoes=None):
 
     if opcoes.get('firebase'):
         yield "☁️ 5/5: Firebase Upload..."
+        
+        # Tenta subir o episódio completo
         if episodio_path and os.path.exists(episodio_path):
             try:
                 from firebase_service import upload_file, update_podcast_feed
@@ -971,6 +981,38 @@ def rodar_boletim(opcoes=None):
                 audio_url = upload_file(episodio_path, f"episodios/{filename}")
                 if audio_url:
                     audio_segment = AudioSegment.from_file(episodio_path)
+                    duracao_seg = len(audio_segment) / 1000
+                    tamanho_bytes = os.path.getsize(episodio_path)
+                    
+                    rss_url = update_podcast_feed(
+                        episodio_audio_url=audio_url,
+                        episodio_titulo=f"Boletim {hoje}",
+                        episodio_descricao="Resumo semanal das evidências científicas.",
+                        data_pub=datetime.now(pytz.timezone("America/Sao_Paulo")),
+                        duracao_segundos=duracao_seg,
+                        tamanho_bytes=tamanho_bytes
+                    )
+                    yield f"✅ Upload concluído! RSS atualizado: {rss_url}"
+            except Exception as e:
+                yield f"❌ Erro no upload: {e}"
+        else:
+            yield "⚠️ Arquivo final do episódio não encontrado (erro na mixagem?). Tentando resgatar partes..."
+            # Lógica de Resgate: Procura por arquivos parciais dos estudos
+            try:
+                from firebase_service import upload_file
+                import glob
+                # Procura por estudo*_completo.mp3 na pasta de áudio
+                partes = glob.glob(os.path.join(AUDIO_DIR, "estudo*_completo.mp3"))
+                if partes:
+                    yield f"🚑 Resgatando {len(partes)} arquivos parciais..."
+                    for parte in partes:
+                        fname = os.path.basename(parte)
+                        url_parte = upload_file(parte, f"resgate/{hoje}/{fname}")
+                        yield f"   - Salvo: {fname}"
+                else:
+                    yield "❌ Nenhum arquivo parcial encontrado para resgate."
+            except Exception as e_rescue:
+                yield f"❌ Erro no resgate: {e_rescue}"
                     rss_url = update_podcast_feed(
                         audio_url, f"RevaCast Weekly - {hoje}", 
                         "Resumo semanal dos artigos científicos.", 

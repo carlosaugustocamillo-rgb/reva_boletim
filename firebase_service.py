@@ -30,6 +30,11 @@ if not firebase_admin._apps:
     else:
         print(f"⚠️ Aviso: Arquivo {CREDENTIALS_PATH} não encontrado e variável FIREBASE_CREDENTIALS_JSON vazia. Uploads falharão.")
 
+def is_firebase_ready():
+    """Verifica se o Firebase foi inicializado corretamente."""
+    return bool(firebase_admin._apps)
+
+
 def upload_file(local_path, destination_blob_name):
     """Faz upload de um arquivo para o Firebase Storage e retorna a URL pública."""
     if not firebase_admin._apps:
