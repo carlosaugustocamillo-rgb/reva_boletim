@@ -8,17 +8,27 @@ import pytz
 # Configuração
 # Certifique-se de ter o arquivo firebase_credentials.json na raiz
 CREDENTIALS_PATH = "firebase_credentials.json"
-BUCKET_NAME = os.environ.get("FIREBASE_BUCKET_NAME", "seu-bucket.appspot.com")
+BUCKET_NAME = os.environ.get("FIREBASE_BUCKET_NAME") or os.environ.get("VITE_FIREBASE_STORAGE_BUCKET") or "revalidatie-website.firebasestorage.app"
 
 # Inicializa Firebase
 if not firebase_admin._apps:
+    # Tenta criar o arquivo de credenciais a partir da variável de ambiente se não existir
+    if not os.path.exists(CREDENTIALS_PATH) and os.environ.get("FIREBASE_CREDENTIALS_JSON"):
+        print("📄 Criando firebase_credentials.json a partir da variável de ambiente...")
+        with open(CREDENTIALS_PATH, "w") as f:
+            f.write(os.environ.get("FIREBASE_CREDENTIALS_JSON"))
+
     if os.path.exists(CREDENTIALS_PATH):
-        cred = credentials.Certificate(CREDENTIALS_PATH)
-        firebase_admin.initialize_app(cred, {
-            'storageBucket': BUCKET_NAME
-        })
+        try:
+            cred = credentials.Certificate(CREDENTIALS_PATH)
+            firebase_admin.initialize_app(cred, {
+                'storageBucket': BUCKET_NAME
+            })
+            print(f"✅ Firebase inicializado com bucket: {BUCKET_NAME}")
+        except Exception as e:
+            print(f"❌ Erro ao inicializar Firebase: {e}")
     else:
-        print(f"⚠️ Aviso: Arquivo {CREDENTIALS_PATH} não encontrado. Uploads falharão.")
+        print(f"⚠️ Aviso: Arquivo {CREDENTIALS_PATH} não encontrado e variável FIREBASE_CREDENTIALS_JSON vazia. Uploads falharão.")
 
 def upload_file(local_path, destination_blob_name):
     """Faz upload de um arquivo para o Firebase Storage e retorna a URL pública."""
