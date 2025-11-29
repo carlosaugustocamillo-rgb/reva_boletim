@@ -868,7 +868,7 @@ def rodar_boletim(opcoes=None):
                         try:
                             audio_segment = AudioSegment.from_file(caminho_temp)
                             # Speedup simples (pode alterar levemente o pitch, mas mantém qualidade aceitável)
-                            audio_rapido = audio_segment.speedup(playback_speed=1.15)
+                            audio_rapido = audio_segment.speedup(playback_speed=1.30)
                             audio_rapido.export(caminho_temp, format="mp3")
                         except Exception as e_speed:
                             print(f"⚠️ Erro ao acelerar áudio: {e_speed}. Usando velocidade normal.")

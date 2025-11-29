@@ -17,7 +17,7 @@ ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST")
 client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 # Configurações de teste
-SPEED_FACTOR = 1.15  # Aumentar velocidade em 15%
+SPEED_FACTOR = 1.30  # Aumentar velocidade em 30%
 
 def gerar_e_acelerar(voice_id, nome, texto, filename):
     print(f"\n🎙️ Gerando áudio para {nome}...")
