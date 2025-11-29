@@ -140,3 +140,87 @@ def debug_import():
             "message": str(e),
             "traceback": traceback.format_exc()
         }
+
+
+@app.get("/teste-audio-curto")
+def teste_audio_curto():
+    """
+    Gera um áudio de teste curto (2 falas) e faz upload para o Firebase
+    para validar o fluxo completo sem gastar muitos créditos.
+    """
+    try:
+        import os
+        from elevenlabs.client import ElevenLabs
+        from elevenlabs import VoiceSettings
+        from pydub import AudioSegment
+        from firebase_service import upload_file
+        
+        # Configuração
+        API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+        VOICE_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
+        VOICE_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
+        
+        if not API_KEY:
+            return {"status": "error", "message": "Sem chave ElevenLabs configurada."}
+            
+        client = ElevenLabs(api_key=API_KEY)
+        
+        # Roteiro curto
+        roteiro = [
+            {"speaker": "HOST", "text": "Olá, este é um teste rápido do RevaCast para validar o sistema."},
+            {"speaker": "COHOST", "text": "Exato! Estamos testando a velocidade e o upload para o Firebase."}
+        ]
+        
+        audios_temp = []
+        base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+        os.makedirs(base_dir, exist_ok=True)
+        
+        # Gera áudios
+        for i, fala in enumerate(roteiro):
+            voice_id = VOICE_HOST if fala['speaker'] == "HOST" else VOICE_COHOST
+            model = "eleven_turbo_v2_5" if fala['speaker'] == "HOST" else "eleven_multilingual_v2"
+            
+            audio_gen = client.text_to_speech.convert(
+                voice_id=voice_id,
+                text=fala['text'],
+                model_id=model,
+                voice_settings=VoiceSettings(stability=0.4, similarity_boost=0.8, style=0.6, use_speaker_boost=True)
+            )
+            
+            temp_path = os.path.join(base_dir, f"temp_test_{i}.mp3")
+            with open(temp_path, "wb") as f:
+                for chunk in audio_gen: f.write(chunk)
+            
+            # Aplica velocidade
+            seg = AudioSegment.from_file(temp_path)
+            speed = 1.0 if fala['speaker'] == "HOST" else 1.30
+            seg_fast = seg.speedup(playback_speed=speed)
+            seg_fast.export(temp_path, format="mp3")
+            audios_temp.append(seg_fast)
+            
+        # Junta tudo
+        final_audio = audios_temp[0]
+        for a in audios_temp[1:]:
+            final_audio += a
+            
+        final_path = os.path.join(base_dir, "teste_fluxo_completo.mp3")
+        final_audio.export(final_path, format="mp3")
+        
+        # Upload
+        url = upload_file(final_path, "testes/teste_fluxo_completo.mp3")
+        
+        return {
+            "status": "success",
+            "message": "Áudio gerado e enviado com sucesso!",
+            "url": url,
+            "host_voice": VOICE_HOST,
+            "cohost_voice": VOICE_COHOST
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
