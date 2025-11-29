@@ -118,7 +118,19 @@ async def agente_revacast(input_data: AgentInput):
         result = run_agent(input_data)
         return result
     except Exception as e:
-        return JSONResponse(
-            status_code=500,
             content={"error": str(e)}
         )
+
+
+@app.get("/debug-import")
+def debug_import():
+    try:
+        import boletim_service
+        return {"status": "ok", "message": "Importação bem sucedida!"}
+    except Exception as e:
+        import traceback
+        return {
+            "status": "error",
+            "message": str(e),
+            "traceback": traceback.format_exc()
+        }
