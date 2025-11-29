@@ -29,6 +29,10 @@ app.add_middleware(
 def root():
     return {"message": "Serviço do boletim científico está no ar. Acesse /painel para interface gráfica."}
 
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "python_version": "unknown"}
+
 
 @app.get("/painel", response_class=HTMLResponse)
 def painel():
