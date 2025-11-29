@@ -83,6 +83,7 @@ mc = Client()
 mc.set_config({"api_key": MC_API_KEY, "server": MC_SERVER})
 
 from elevenlabs.client import ElevenLabs
+from elevenlabs import VoiceSettings
 
 # ... (imports)
 
