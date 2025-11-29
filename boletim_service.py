@@ -869,9 +869,9 @@ def rodar_boletim(opcoes=None):
                         try:
                             audio_segment = AudioSegment.from_file(caminho_temp)
                             
-                            # Ivo (Host) fala um pouco mais devagar (1.15x)
+                            # Ivo (Host) fala em velocidade normal (1.0x) - Voz nova v2.5
                             # Manu (Cohost) fala mais rápido (1.30x)
-                            fator_velocidade = 1.15 if speaker_clean == 'HOST' else 1.30
+                            fator_velocidade = 1.0 if speaker_clean == 'HOST' else 1.30
                             
                             audio_rapido = audio_segment.speedup(playback_speed=fator_velocidade)
                             audio_rapido.export(caminho_temp, format="mp3")
