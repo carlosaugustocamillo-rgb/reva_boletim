@@ -199,9 +199,19 @@ def teste_audio_curto():
             audios_temp.append(seg_fast)
             
         # Junta tudo
-        final_audio = audios_temp[0]
-        for a in audios_temp[1:]:
-            final_audio += a
+        final_audio = AudioSegment.empty()
+        
+        # Adiciona Intro se existir
+        intro_path = os.path.join(base_dir, "intro_guto.mp3")
+        if os.path.exists(intro_path):
+            try:
+                intro = AudioSegment.from_file(intro_path)
+                final_audio += intro + AudioSegment.silent(duration=1000)
+            except Exception as e:
+                print(f"Erro ao carregar intro no teste: {e}")
+        
+        for a in audios_temp:
+            final_audio += a + AudioSegment.silent(duration=500)
             
         final_path = os.path.join(base_dir, "teste_fluxo_completo.mp3")
         final_audio.export(final_path, format="mp3")
