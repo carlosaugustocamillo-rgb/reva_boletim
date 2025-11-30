@@ -880,8 +880,12 @@ def rodar_boletim(opcoes=None):
                             # Manu (Cohost) fala mais rápido (1.30x)
                             fator_velocidade = 1.0 if speaker_clean == 'HOST' else 1.30
                             
-                            audio_rapido = audio_segment.speedup(playback_speed=fator_velocidade)
-                            audio_rapido.export(caminho_temp, format="mp3")
+                            if fator_velocidade != 1.0:
+                                audio_rapido = audio_segment.speedup(playback_speed=fator_velocidade)
+                                audio_rapido.export(caminho_temp, format="mp3")
+                            else:
+                                # Host (1.0x): Mantém original para máxima qualidade
+                                pass
                         except Exception as e_speed:
                             print(f"⚠️ Erro ao acelerar áudio: {e_speed}. Usando velocidade normal.")
 

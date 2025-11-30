@@ -194,9 +194,16 @@ def teste_audio_curto():
             # Aplica velocidade
             seg = AudioSegment.from_file(temp_path)
             speed = 1.0 if fala['speaker'] == "HOST" else 1.30
-            seg_fast = seg.speedup(playback_speed=speed)
-            seg_fast.export(temp_path, format="mp3")
-            audios_temp.append(seg_fast)
+            
+            # Só aplica speedup se for diferente de 1.0 para evitar processamento desnecessário/ruído
+            if speed != 1.0:
+                seg_fast = seg.speedup(playback_speed=speed)
+                seg_fast.export(temp_path, format="mp3")
+                audios_temp.append(seg_fast) # Append the modified segment
+            else:
+                # Se for 1.0, mantém o arquivo original (ElevenLabs direto)
+                # No caso de 1.0, seg_fast não é criado, então usamos 'seg'
+                audios_temp.append(seg)
             
         # Junta tudo
         final_audio = AudioSegment.empty()
