@@ -848,25 +848,79 @@ def rodar_boletim(opcoes=None):
                 if eh_alta_evidencia:
                     artigos_podcast.append(art)
             
-            print(f"🎙️ Selecionados {len(artigos_podcast)} estudos de alta evidência para o Podcast (de {len(todos_artigos_relevantes)} totais).")
+            # Ordenação Inteligente por Nível de Evidência
+            def get_evidence_score(art):
+                tipos = [t.lower() for t in art.get('tipos', [])]
+                texto = (art.get('titulo', '') + ' ' + art.get('resumo_original', '')).lower()
+                
+                # Peso 3: Guidelines e Consensos
+                if any(t in tipos for t in ['practice guideline', 'guideline', 'consensus development conference']) or \
+                   any(w in texto for w in ['guideline', 'consensus statement', 'position paper']):
+                    return 3
+                
+                # Peso 2: Meta-análises e Revisões Sistemáticas
+                if any(t in tipos for t in ['meta-analysis', 'systematic review']) or \
+                   any(w in texto for w in ['meta-analysis', 'systematic review']):
+                    return 2
+                
+                # Peso 1: RCTs
+                if any(t in tipos for t in ['randomized controlled trial', 'controlled clinical trial']) or \
+                   any(w in texto for w in ['randomized', 'randomised', 'controlled trial']):
+                    return 1
+                
+                return 0
 
-            # FALLBACK DE SEGURANÇA: Se não sobrou nada (muito restrito), pega os top 5 gerais para não ficar sem episódio
+            # Ordena: Maior score primeiro. Desempate pela ordem original (que é data descrescente no PubMed)
+            artigos_podcast.sort(key=get_evidence_score, reverse=True)
+
+            # LIMITA A 6 ESTUDOS (aprox 20-25 min de áudio)
+            LIMIT_PODCAST = 6
+            artigos_cortados = []
+            
+            if len(artigos_podcast) > LIMIT_PODCAST:
+                artigos_cortados = artigos_podcast[LIMIT_PODCAST:]
+                artigos_podcast = artigos_podcast[:LIMIT_PODCAST]
+
+            # RELATÓRIO DE CURADORIA
+            print("\n" + "="*50)
+            print("🎙️ RELATÓRIO DE CURADORIA DO PODCAST")
+            print("="*50)
+            
+            print(f"\n✅ SELECIONADOS ({len(artigos_podcast)}):")
+            for art in artigos_podcast:
+                tipos = ", ".join(art.get('tipos', [])[:2]) # Mostra só os 2 primeiros tipos
+                print(f"   - {art.get('titulo', '')[:80]}... [{tipos}]")
+                
+            if artigos_cortados:
+                print(f"\n❌ CORTADOS PELO LIMITE ({len(artigos_cortados)}):")
+                for art in artigos_cortados:
+                    tipos = ", ".join(art.get('tipos', [])[:2])
+                    print(f"   - {art.get('titulo', '')[:80]}... [{tipos}]")
+            
+            ignored_count = len(todos_artigos_relevantes) - len(artigos_podcast) - len(artigos_cortados)
+            print(f"\n⚠️ IGNORADOS (Baixa evidência/Outros): {ignored_count} estudos.")
+            print("="*50 + "\n")
+
+            # FALLBACK DE SEGURANÇA: Se não sobrou nada (muito restrito), pega os top 3 gerais
             if not artigos_podcast and todos_artigos_relevantes:
-                print("⚠️ Nenhum estudo de alta evidência encontrado. Usando fallback (Top 5 gerais).")
-                artigos_podcast = todos_artigos_relevantes[:5]
+                print("⚠️ Nenhum estudo de alta evidência encontrado. Usando fallback (Top 3 gerais).")
+                artigos_podcast = todos_artigos_relevantes[:3]
 
             roteiros_audio = []
             if artigos_podcast:
-                yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos de alta evidência..."
+                yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos selecionados..."
                 
                 for idx, art in enumerate(artigos_podcast):
                     is_last = (idx == len(artigos_podcast) - 1)
-                    yield f"   - Roteirizando estudo {idx+1}/{len(artigos_podcast)}: {art['titulo'][:30]}..."
+                    yield f"   - Roteirizando estudo {idx+1}/{len(artigos_podcast)}: {art.get('titulo', 'Sem título')[:30]}..."
+                    
+                    autores_list = art.get('autores', [])
+                    primeiro_autor = autores_list[0] if autores_list else "Autor desconhecido"
                     
                     dialogo = resumo_para_podcast(
-                        titulo=art['titulo'],
-                        resumo_pt=art['resumo_traduzido'],
-                        primeiro_autor=art['autores'][0] if art['autores'] else "Autor desconhecido",
+                        titulo=art.get('titulo', 'Sem título'),
+                        resumo_pt=art.get('resumo_traduzido', ''),
+                        primeiro_autor=primeiro_autor,
                         idx=idx,
                         is_last=is_last
                     )
