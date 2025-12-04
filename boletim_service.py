@@ -164,6 +164,10 @@ def buscar_info_estruturada(ids):
             a.get('LastName', '') + ' ' + a.get('Initials', '')
             for a in art_data.get('AuthorList', [])
         ]
+        
+        # Extrai tipos de publicação
+        artigo['tipos'] = [str(pt) for pt in art_data.get('PublicationTypeList', [])]
+        
         journal_info = art_data['Journal']['JournalIssue']
         artigo['journal'] = art_data['Journal']['Title']
         artigo['ano'] = journal_info['PubDate'].get('Year', 's/ano')
@@ -789,18 +793,46 @@ def rodar_boletim(opcoes=None):
         # --- ROTEIRO (Parte do passo de texto, mas opcional) ---
         if opcoes.get('roteiro'):
             yield "📝 Gerando Roteiros de Podcast..."
-            total_artigos = len(todos_artigos_relevantes)
-            for idx, artigo_info in enumerate(todos_artigos_relevantes):
-                is_last = (idx == total_artigos - 1)
-                yield f"   - Gerando roteiro para estudo {idx+1}/{total_artigos}..."
-                roteiro = resumo_para_podcast(
-                    artigo_info['titulo'], 
-                    artigo_info['resumo_traduzido'], 
-                    artigo_info['primeiro_autor'], 
-                    idx=idx,
-                    is_last=is_last
-                )
-                roteiros_audio.append(roteiro)
+            
+            # Filtra para o Podcast: Apenas RCT, Systematic Review, Meta-Analysis, Guidelines
+            # E que tenham resumo traduzido disponível
+            tipos_podcast = [
+                'Randomized Controlled Trial', 
+                'Systematic Review', 
+                'Meta-Analysis', 
+                'Practice Guideline',
+                'Guideline'
+            ]
+            
+            artigos_podcast = []
+            for art in todos_artigos_relevantes:
+                if not art.get('resumo_traduzido'): continue
+                
+                # Verifica se tem algum dos tipos aceitos
+                tipos_artigo = art.get('tipos', [])
+                eh_alta_evidencia = any(t in tipos_artigo for t in tipos_podcast)
+                
+                if eh_alta_evidencia:
+                    artigos_podcast.append(art)
+            
+            print(f"🎙️ Selecionados {len(artigos_podcast)} estudos de alta evidência para o Podcast (de {len(todos_artigos_relevantes)} totais).")
+
+            roteiros_audio = []
+            if artigos_podcast:
+                yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos de alta evidência..."
+                
+                for idx, art in enumerate(artigos_podcast):
+                    is_last = (idx == len(artigos_podcast) - 1)
+                    yield f"   - Roteirizando estudo {idx+1}/{len(artigos_podcast)}: {art['titulo'][:30]}..."
+                    
+                    dialogo = resumo_para_podcast(
+                        titulo=art['titulo'],
+                        resumo_pt=art['resumo_traduzido'],
+                        primeiro_autor=art['autores'][0] if art['autores'] else "Autor desconhecido",
+                        idx=idx,
+                        is_last=is_last
+                    )
+                    roteiros_audio.append(dialogo)
             
             # Salva o roteiro
             with open(roteiro_path, "w", encoding="utf-8") as f:
