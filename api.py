@@ -103,6 +103,43 @@ def cancelar_boletim(task_id: str):
     
     return {"status": task["status"], "message": "Tarefa já finalizada ou cancelada."}
 
+@app.post("/atualizar-feed")
+def trigger_feed_update():
+    """Força a atualização do Feed RSS com base nos arquivos do Firebase."""
+    try:
+        from force_feed_update import force_update_feed
+        force_update_feed()
+        return {"status": "success", "message": "Feed RSS atualizado com sucesso!"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/listar-episodios")
+def listar_episodios():
+    """Lista os últimos 5 episódios do Firebase com link de download."""
+    try:
+        bucket = storage.bucket()
+        blobs = bucket.list_blobs(prefix="episodios/")
+        lista = []
+        for blob in blobs:
+            if blob.name.endswith(".mp3"):
+                # Garante que é público
+                try:
+                    blob.make_public()
+                except: pass
+                
+                lista.append({
+                    "nome": blob.name.split("/")[-1],
+                    "url": blob.public_url,
+                    "data": blob.time_created.isoformat(),
+                    "tamanho": f"{blob.size / 1024 / 1024:.2f} MB"
+                })
+        
+        # Ordena por data (mais recente primeiro)
+        lista.sort(key=lambda x: x['data'], reverse=True)
+        return lista[:5] # Retorna só os 5 últimos
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/")
 def root():
     return {"message": "Serviço do boletim científico está no ar. Acesse /painel para interface gráfica."}
