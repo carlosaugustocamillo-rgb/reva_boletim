@@ -656,7 +656,17 @@ def rodar_boletim(opcoes=None):
         for consulta in CONSULTAS_PRINCIPAIS:
             titulo_secao, query = consulta.split(": ", 1)
             yield f"   - Processando seção: {titulo_secao}..."
+            
+            # 1. Busca
+            yield f"   🔎 Buscando artigos no PubMed para '{titulo_secao}'..."
             ids = buscar_ids(query)
+            
+            if not ids:
+                print(f"   Nenhum artigo encontrado para '{titulo_secao}'.")
+                continue
+                
+            # Pega detalhes
+            yield f"   📄 Baixando detalhes de {len(ids)} artigos para '{titulo_secao}'..."
             artigos = buscar_info_estruturada(ids)
             artigos_unicos = [a for a in artigos if a['pmid'] not in artigos_vistos]
 
