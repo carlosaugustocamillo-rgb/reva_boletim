@@ -166,7 +166,31 @@
     </div>
 
     <script>
-        function rodarBoletim() {
+        let currentTaskId = null;
+        let pollInterval = null;
+
+        // Tenta recuperar tarefa em andamento ao carregar
+        window.onload = function () {
+            const savedTaskId = localStorage.getItem('currentTaskId');
+            if (savedTaskId) {
+                console.log("Tarefa recuperada:", savedTaskId);
+                currentTaskId = savedTaskId;
+
+                const statusDiv = document.getElementById('status');
+                const logDiv = document.getElementById('log');
+                const btn = document.getElementById('btnRodar');
+
+                statusDiv.style.display = 'block';
+                logDiv.style.display = 'block';
+                btn.disabled = true;
+                btn.innerHTML = 'Processando em Background...';
+
+                statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Recuperando status da tarefa anterior...</div>';
+                startPolling(savedTaskId);
+            }
+        };
+
+        async function rodarBoletim() {
             const btn = document.getElementById('btnRodar');
             const statusDiv = document.getElementById('status');
             const logDiv = document.getElementById('log');
@@ -178,67 +202,108 @@
             const mailchimp = document.getElementById('opt_mailchimp').checked;
             const firebase = document.getElementById('opt_firebase').checked;
 
-            // Monta a URL com query params
-            const url = `/rodar-boletim-stream?resumos=${resumos}&roteiro=${roteiro}&audio=${audio}&mailchimp=${mailchimp}&firebase=${firebase}`;
-
             // Estado de carregamento
             btn.disabled = true;
-            btn.innerHTML = 'Processando...';
+            btn.innerHTML = 'Iniciando...';
             statusDiv.style.display = 'block';
             statusDiv.className = '';
-            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Iniciando conexão...</div>';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Iniciando tarefa em background...</div>';
 
             logDiv.style.display = 'block';
             logDiv.innerHTML = ''; // Limpa log anterior
 
-            const evtSource = new EventSource(url);
+            // Monta query params
+            const params = new URLSearchParams({
+                resumos, roteiro, audio, mailchimp, firebase
+            });
 
-            evtSource.onmessage = function (event) {
-                const data = JSON.parse(event.data);
+            try {
+                // 1. Inicia a tarefa via POST
+                const response = await fetch(`/iniciar-boletim?${params.toString()}`, { method: 'POST' });
+                const data = await response.json();
 
-                if (data.status === 'progress') {
-                    // Atualiza status principal e adiciona ao log
-                    statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">' + data.message + '</div>';
-
-                    const logItem = document.createElement('div');
-                    logItem.style.marginBottom = '5px';
-                    logItem.style.borderBottom = '1px solid #eee';
-                    logItem.style.paddingBottom = '2px';
-                    logItem.innerText = new Date().toLocaleTimeString() + ' - ' + data.message;
-                    logDiv.appendChild(logItem);
-                    logDiv.scrollTop = logDiv.scrollHeight; // Auto-scroll
+                if (data.task_id) {
+                    currentTaskId = data.task_id;
+                    localStorage.setItem('currentTaskId', currentTaskId); // Salva para persistência
+                    statusDiv.innerHTML = `<div class="spinner"></div><div class="loading">Tarefa iniciada! ID: ${currentTaskId}</div>`;
+                    btn.innerHTML = 'Processando em Background...';
+                    startPolling(currentTaskId);
+                } else {
+                    throw new Error("Não foi possível obter o ID da tarefa.");
                 }
-                else if (data.status === 'done') {
-                    evtSource.close();
-                    statusDiv.className = 'success';
-                    statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado com sucesso!';
-
-                    const logItem = document.createElement('div');
-                    logItem.style.color = 'green';
-                    logItem.style.fontWeight = 'bold';
-                    logItem.innerText = 'FINALIZADO: ' + JSON.stringify(data.result, null, 2);
-                    logDiv.appendChild(logItem);
-
-                    btn.disabled = false;
-                    btn.innerHTML = '🚀 Rodar Selecionados';
-                }
-                else if (data.status === 'error') {
-                    evtSource.close();
-                    statusDiv.className = 'error';
-                    statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + data.message;
-                    btn.disabled = false;
-                    btn.innerHTML = '🚀 Tentar Novamente';
-                }
-            };
-
-            evtSource.onerror = function (err) {
-                console.error("EventSource failed:", err);
-                evtSource.close();
+            } catch (e) {
                 statusDiv.className = 'error';
-                statusDiv.innerHTML = '❌ <strong>Erro de Conexão:</strong><br>A conexão com o servidor foi perdida.';
+                statusDiv.innerHTML = '❌ <strong>Erro ao iniciar:</strong><br>' + e.message;
                 btn.disabled = false;
-                btn.innerHTML = '🚀 Tentar Novamente';
-            };
+                btn.innerHTML = '🚀 Rodar Selecionados';
+            }
+        }
+
+        function startPolling(taskId) {
+            if (pollInterval) clearInterval(pollInterval);
+
+            const logDiv = document.getElementById('log');
+            const statusDiv = document.getElementById('status');
+            const btn = document.getElementById('btnRodar');
+
+            pollInterval = setInterval(async () => {
+                try {
+                    const res = await fetch(`/status-boletim/${taskId}`);
+                    if (!res.ok) return;
+
+                    const data = await res.json();
+
+                    if (data.status === 'not_found') {
+                        statusDiv.className = 'error';
+                        statusDiv.innerHTML = "Tarefa não encontrada (pode ter expirado).";
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('currentTaskId');
+                        btn.disabled = false;
+                        btn.innerHTML = '🚀 Rodar Selecionados';
+                        return;
+                    }
+
+                    // Atualiza Logs
+                    if (data.logs && data.logs.length > 0) {
+                        // Reconstrói o log para garantir ordem
+                        logDiv.innerHTML = data.logs.map(msg => {
+                            return `<div style="margin-bottom: 5px; border-bottom: 1px solid #eee; padding-bottom: 2px;">${new Date().toLocaleTimeString()} - ${msg}</div>`;
+                        }).join('');
+                        logDiv.scrollTop = logDiv.scrollHeight;
+                    }
+
+                    // Verifica fim
+                    if (data.status === 'completed' || data.status === 'error') {
+                        clearInterval(pollInterval);
+                        localStorage.removeItem('currentTaskId'); // Limpa tarefa salva
+                        btn.disabled = false;
+                        btn.innerHTML = '🚀 Rodar Selecionados';
+
+                        if (data.status === 'completed') {
+                            statusDiv.className = 'success';
+                            statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado!';
+
+                            if (data.result && data.result.audio_url) {
+                                const downloadBtn = `
+                                    <div style="margin-top: 15px; text-align: center;">
+                                        <a href="${data.result.audio_url}" target="_blank" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                            ⬇️ Baixar MP3 do Episódio
+                                        </a>
+                                    </div>
+                                `;
+                                logDiv.innerHTML += downloadBtn;
+                            }
+                        } else {
+                            statusDiv.className = 'error';
+                            statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>Ocorreu um erro durante o processamento.';
+                        }
+                    }
+
+                } catch (e) {
+                    console.warn("Erro no polling (internet caiu?):", e);
+                    // Não mostra erro na UI para não assustar, apenas continua tentando
+                }
+            }, 3000); // Consulta a cada 3 segundos
         }
 
         async function criarCampanha() {

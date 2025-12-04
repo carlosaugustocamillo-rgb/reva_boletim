@@ -455,7 +455,7 @@ CONSULTAS_PRINCIPAIS = [
     'Doenças Intersticiais: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "interstitial lung diseases"[tiab] OR ILD[tiab])',
     'Asma: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Asthma"[Mesh] OR asthma[tiab])',
     'Fibrose Cística: ("pulmonary rehabilitation"[tiab] OR "Exercise"[tiab]) AND ("Cystic Fibrosis"[Mesh] OR "cystic fibrosis"[tiab])',
-    'Câncer: ("exercise"[tiab]) AND ("Neoplasms"[Mesh] OR cancer[tiab] OR cancers[tiab])'
+    'Câncer: ("exercise"[tiab] OR "Exercise"[Mesh]) AND ("Neoplasms"[Mesh] OR cancer[tiab] OR oncology[tiab])'
 ]
 
 CONSULTAS_DETALHADAS = {

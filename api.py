@@ -1,8 +1,9 @@
 
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
+import uuid
 
 from boletim_service import rodar_boletim
 from campanha_service import criar_campanha_tematica
@@ -15,15 +16,37 @@ class CampanhaInput(BaseModel):
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
 
-# Configuração de CORS para permitir requisições do frontend (localhost:3000, etc)
+# Configuração de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, substitua "*" pela URL do seu site
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Armazenamento em memória para tarefas em background ---
+tasks_db = {}
+
+def processar_boletim_background(task_id: str, opcoes: dict):
+    """Função wrapper que roda o boletim e salva logs na memória."""
+    tasks_db[task_id] = {"status": "running", "logs": [], "result": None}
+    try:
+        for log_msg in rodar_boletim(opcoes):
+            if isinstance(log_msg, dict):
+                tasks_db[task_id]["result"] = log_msg
+            else:
+                tasks_db[task_id]["logs"].append(str(log_msg))
+        
+        tasks_db[task_id]["status"] = "completed"
+        tasks_db[task_id]["logs"].append("✅ Processo finalizado com sucesso.")
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
+        tasks_db[task_id]["status"] = "error"
+        tasks_db[task_id]["logs"].append(error_msg)
+        print(error_msg)
 
 @app.get("/")
 def root():
@@ -33,13 +56,48 @@ def root():
 def health_check():
     return {"status": "ok", "python_version": "unknown"}
 
-
 @app.get("/painel", response_class=HTMLResponse)
 def painel():
     with open("dashboard.html", "r", encoding="utf-8") as f:
         return f.read()
 
+# --- Novos Endpoints Background ---
 
+@app.post("/iniciar-boletim")
+def iniciar_boletim(
+    background_tasks: BackgroundTasks,
+    resumos: bool = True,
+    roteiro: bool = True,
+    audio: bool = True,
+    mailchimp: bool = True,
+    firebase: bool = True
+):
+    task_id = str(uuid.uuid4())
+    opcoes = {
+        'resumos': resumos,
+        'roteiro': roteiro,
+        'audio': audio,
+        'mailchimp': mailchimp,
+        'firebase': firebase
+    }
+    
+    # Inicia a tarefa em background
+    background_tasks.add_task(processar_boletim_background, task_id, opcoes)
+    
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "message": "Boletim iniciado em segundo plano. Verifique o status com o ID fornecido."
+    }
+
+@app.get("/status-boletim/{task_id}")
+def get_status_boletim(task_id: str):
+    task = tasks_db.get(task_id)
+    if not task:
+        return {"status": "not_found", "message": "Tarefa não encontrada."}
+    return task
+
+# --- Endpoint Antigo (Mantido para compatibilidade, mas não recomendado para conexões instáveis) ---
 @app.get("/rodar-boletim-stream")
 def rodar_boletim_stream(
     resumos: bool = True,
