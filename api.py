@@ -25,27 +25,60 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# --- Armazenamento em memória para tarefas em background ---
-tasks_db = {}
+# --- Armazenamento em ARQUIVO para tarefas em background (Persistência) ---
+import os
+import json
+
+TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tasks")
+os.makedirs(TASKS_DIR, exist_ok=True)
+
+def save_task(task_id, data):
+    """Salva o estado da tarefa em um arquivo JSON."""
+    try:
+        filepath = os.path.join(TASKS_DIR, f"{task_id}.json")
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Erro ao salvar tarefa {task_id}: {e}")
+
+def load_task(task_id):
+    """Carrega o estado da tarefa do arquivo JSON."""
+    try:
+        filepath = os.path.join(TASKS_DIR, f"{task_id}.json")
+        if not os.path.exists(filepath):
+            return None
+        with open(filepath, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        print(f"Erro ao carregar tarefa {task_id}: {e}")
+        return None
 
 def processar_boletim_background(task_id: str, opcoes: dict):
-    """Função wrapper que roda o boletim e salva logs na memória."""
-    tasks_db[task_id] = {"status": "running", "logs": [], "result": None}
+    """Função wrapper que roda o boletim e salva logs em arquivo."""
+    # Estado inicial
+    task_state = {"status": "running", "logs": [], "result": None}
+    save_task(task_id, task_state)
+    
     try:
         for log_msg in rodar_boletim(opcoes):
             if isinstance(log_msg, dict):
-                tasks_db[task_id]["result"] = log_msg
+                task_state["result"] = log_msg
             else:
-                tasks_db[task_id]["logs"].append(str(log_msg))
+                task_state["logs"].append(str(log_msg))
+            
+            # Salva periodicamente (a cada log) para persistir progresso
+            save_task(task_id, task_state)
         
-        tasks_db[task_id]["status"] = "completed"
-        tasks_db[task_id]["logs"].append("✅ Processo finalizado com sucesso.")
+        task_state["status"] = "completed"
+        task_state["logs"].append("✅ Processo finalizado com sucesso.")
+        save_task(task_id, task_state)
         
     except Exception as e:
         import traceback
         error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
-        tasks_db[task_id]["status"] = "error"
-        tasks_db[task_id]["logs"].append(error_msg)
+        task_state["status"] = "error"
+        task_state["logs"].append(error_msg)
+        save_task(task_id, task_state)
         print(error_msg)
 
 @app.get("/")
@@ -81,6 +114,9 @@ def iniciar_boletim(
         'firebase': firebase
     }
     
+    # Cria o arquivo inicial
+    save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando..."], "result": None})
+    
     # Inicia a tarefa em background
     background_tasks.add_task(processar_boletim_background, task_id, opcoes)
     
@@ -92,7 +128,7 @@ def iniciar_boletim(
 
 @app.get("/status-boletim/{task_id}")
 def get_status_boletim(task_id: str):
-    task = tasks_db.get(task_id)
+    task = load_task(task_id)
     if not task:
         return {"status": "not_found", "message": "Tarefa não encontrada."}
     return task
