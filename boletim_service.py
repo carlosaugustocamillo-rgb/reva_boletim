@@ -808,14 +808,30 @@ def rodar_boletim(opcoes=None):
             for art in todos_artigos_relevantes:
                 if not art.get('resumo_traduzido'): continue
                 
-                # Verifica se tem algum dos tipos aceitos
+                # Verifica se tem algum dos tipos aceitos NOS METADADOS
                 tipos_artigo = art.get('tipos', [])
                 eh_alta_evidencia = any(t in tipos_artigo for t in tipos_podcast)
+                
+                # FALLBACK: Se não achou nos metadados (comum em artigos muito recentes),
+                # procura palavras-chave no TÍTULO ou RESUMO ORIGINAL
+                if not eh_alta_evidencia:
+                    texto_completo = (art.get('titulo', '') + ' ' + art.get('resumo_original', '')).lower()
+                    termos_chave = [
+                        'randomized', 'randomised', 'controlled trial', 
+                        'systematic review', 'meta-analysis', 'guideline',
+                        'consensus', 'position statement'
+                    ]
+                    eh_alta_evidencia = any(termo in texto_completo for termo in termos_chave)
                 
                 if eh_alta_evidencia:
                     artigos_podcast.append(art)
             
             print(f"🎙️ Selecionados {len(artigos_podcast)} estudos de alta evidência para o Podcast (de {len(todos_artigos_relevantes)} totais).")
+
+            # FALLBACK DE SEGURANÇA: Se não sobrou nada (muito restrito), pega os top 5 gerais para não ficar sem episódio
+            if not artigos_podcast and todos_artigos_relevantes:
+                print("⚠️ Nenhum estudo de alta evidência encontrado. Usando fallback (Top 5 gerais).")
+                artigos_podcast = todos_artigos_relevantes[:5]
 
             roteiros_audio = []
             if artigos_podcast:
