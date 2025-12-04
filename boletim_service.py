@@ -103,6 +103,8 @@ if ELEVENLABS_API_KEY:
 # FUNÇÕES AUXILIARES (copiadas/adaptadas do seu Colab)
 # ======================================================================
 
+import time
+
 def buscar_ids(query):
     """
     Busca TODOS os IDs no PubMed para uma query dos últimos 7 dias.
@@ -120,14 +122,27 @@ def buscar_ids(query):
     print(f"Query: {query}")
 
     # 1) Primeiro esearch: só pra saber o COUNT
-    handle = Entrez.esearch(
-        db="pubmed",
-        term=query,
-        retmax=0,
-        mindate=mindate,
-        maxdate=maxdate,
-        datetype="pdat"
-    )
+    time.sleep(2) # Rate limit
+    try:
+        handle = Entrez.esearch(
+            db="pubmed",
+            term=query,
+            retmax=0,
+            mindate=mindate,
+            maxdate=maxdate,
+            datetype="pdat"
+        )
+    except Exception as e:
+        print(f"⚠️ Erro no esearch (tentando de novo em 5s): {e}")
+        time.sleep(5)
+        handle = Entrez.esearch(
+            db="pubmed",
+            term=query,
+            retmax=0,
+            mindate=mindate,
+            maxdate=maxdate,
+            datetype="pdat"
+        )
     record = Entrez.read(handle)
     total_encontrado = int(record.get("Count", 0))
 
@@ -138,6 +153,7 @@ def buscar_ids(query):
     print(f"Encontrados {total_encontrado} artigos. Buscando TODOS os IDs...")
 
     # 2) Segundo esearch: traz todos os IDs (sem limite artificial)
+    time.sleep(2) # Rate limit
     handle = Entrez.esearch(
         db="pubmed",
         term=query,
@@ -153,7 +169,13 @@ def buscar_ids(query):
 def buscar_info_estruturada(ids):
     if not ids:
         return []
-    handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
+    time.sleep(2) # Rate limit
+    try:
+        handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
+    except Exception as e:
+        print(f"⚠️ Erro no efetch (tentando de novo em 5s): {e}")
+        time.sleep(5)
+        handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
     records = Entrez.read(handle)
     artigos = []
     for article in records['PubmedArticle']:
