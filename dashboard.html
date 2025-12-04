@@ -141,6 +141,11 @@
             🚀 Rodar Selecionados
         </button>
 
+        <button id="btnCancelar" onclick="cancelarBoletim()"
+            style="background-color: #dc3545; display: none; margin-top: 10px;">
+            🛑 Cancelar Processo
+        </button>
+
         <div id="status"></div>
         <div id="log"
             style="text-align: left; margin-top: 20px; font-family: monospace; font-size: 14px; color: #333; background: #f9f9f9; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; display: none;">
@@ -179,11 +184,13 @@
                 const statusDiv = document.getElementById('status');
                 const logDiv = document.getElementById('log');
                 const btn = document.getElementById('btnRodar');
+                const btnCancel = document.getElementById('btnCancelar');
 
                 statusDiv.style.display = 'block';
                 logDiv.style.display = 'block';
                 btn.disabled = true;
                 btn.innerHTML = 'Processando em Background...';
+                btnCancel.style.display = 'inline-block'; // Mostra cancelar
 
                 statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Recuperando status da tarefa anterior...</div>';
                 startPolling(savedTaskId);
@@ -192,6 +199,7 @@
 
         async function rodarBoletim() {
             const btn = document.getElementById('btnRodar');
+            const btnCancel = document.getElementById('btnCancelar');
             const statusDiv = document.getElementById('status');
             const logDiv = document.getElementById('log');
 
@@ -227,6 +235,7 @@
                     localStorage.setItem('currentTaskId', currentTaskId); // Salva para persistência
                     statusDiv.innerHTML = `<div class="spinner"></div><div class="loading">Tarefa iniciada! ID: ${currentTaskId}</div>`;
                     btn.innerHTML = 'Processando em Background...';
+                    btnCancel.style.display = 'inline-block'; // Mostra cancelar
                     startPolling(currentTaskId);
                 } else {
                     throw new Error("Não foi possível obter o ID da tarefa.");
@@ -239,12 +248,30 @@
             }
         }
 
+        async function cancelarBoletim() {
+            if (!currentTaskId) return;
+            if (!confirm("Tem certeza que deseja cancelar? O processo será interrompido na próxima etapa.")) return;
+
+            const btnCancel = document.getElementById('btnCancelar');
+            btnCancel.disabled = true;
+            btnCancel.innerHTML = "Solicitando cancelamento...";
+
+            try {
+                await fetch(`/cancelar-boletim/${currentTaskId}`, { method: 'POST' });
+            } catch (e) {
+                alert("Erro ao enviar solicitação de cancelamento.");
+                btnCancel.disabled = false;
+                btnCancel.innerHTML = "🛑 Cancelar Processo";
+            }
+        }
+
         function startPolling(taskId) {
             if (pollInterval) clearInterval(pollInterval);
 
             const logDiv = document.getElementById('log');
             const statusDiv = document.getElementById('status');
             const btn = document.getElementById('btnRodar');
+            const btnCancel = document.getElementById('btnCancelar');
 
             pollInterval = setInterval(async () => {
                 try {
@@ -260,6 +287,7 @@
                         localStorage.removeItem('currentTaskId');
                         btn.disabled = false;
                         btn.innerHTML = '🚀 Rodar Selecionados';
+                        btnCancel.style.display = 'none';
                         return;
                     }
 
@@ -272,12 +300,19 @@
                         logDiv.scrollTop = logDiv.scrollHeight;
                     }
 
+                    if (data.status === 'canceling') {
+                        statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Cancelando... Aguarde o fim da etapa atual.</div>';
+                    }
+
                     // Verifica fim
-                    if (data.status === 'completed' || data.status === 'error') {
+                    if (data.status === 'completed' || data.status === 'error' || data.status === 'canceled') {
                         clearInterval(pollInterval);
                         localStorage.removeItem('currentTaskId'); // Limpa tarefa salva
                         btn.disabled = false;
                         btn.innerHTML = '🚀 Rodar Selecionados';
+                        btnCancel.style.display = 'none'; // Esconde cancelar
+                        btnCancel.disabled = false;
+                        btnCancel.innerHTML = "🛑 Cancelar Processo";
 
                         if (data.status === 'completed') {
                             statusDiv.className = 'success';
@@ -293,6 +328,9 @@
                                 `;
                                 logDiv.innerHTML += downloadBtn;
                             }
+                        } else if (data.status === 'canceled') {
+                            statusDiv.className = 'error';
+                            statusDiv.innerHTML = '🛑 <strong>Cancelado:</strong><br>O processo foi interrompido pelo usuário.';
                         } else {
                             statusDiv.className = 'error';
                             statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>Ocorreu um erro durante o processamento.';

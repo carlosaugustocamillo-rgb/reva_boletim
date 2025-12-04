@@ -61,12 +61,20 @@ def processar_boletim_background(task_id: str, opcoes: dict):
     
     try:
         for log_msg in rodar_boletim(opcoes):
+            # Verifica se foi solicitado cancelamento
+            current_state = load_task(task_id)
+            if current_state and current_state.get("status") == "canceling":
+                task_state["status"] = "canceled"
+                task_state["logs"].append("🛑 Processo cancelado pelo usuário.")
+                save_task(task_id, task_state)
+                return # Interrompe imediatamente
+
             if isinstance(log_msg, dict):
                 task_state["result"] = log_msg
             else:
                 task_state["logs"].append(str(log_msg))
             
-            # Salva periodicamente (a cada log) para persistir progresso
+            # Salva periodicamente
             save_task(task_id, task_state)
         
         task_state["status"] = "completed"
@@ -80,6 +88,20 @@ def processar_boletim_background(task_id: str, opcoes: dict):
         task_state["logs"].append(error_msg)
         save_task(task_id, task_state)
         print(error_msg)
+
+@app.post("/cancelar-boletim/{task_id}")
+def cancelar_boletim(task_id: str):
+    task = load_task(task_id)
+    if not task:
+        return {"status": "not_found", "message": "Tarefa não encontrada."}
+    
+    if task["status"] in ["running", "queued"]:
+        task["status"] = "canceling"
+        task["logs"].append("⚠️ Solicitando cancelamento...")
+        save_task(task_id, task)
+        return {"status": "canceling", "message": "Solicitação de cancelamento enviada."}
+    
+    return {"status": task["status"], "message": "Tarefa já finalizada ou cancelada."}
 
 @app.get("/")
 def root():
