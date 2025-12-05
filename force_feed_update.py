@@ -1,7 +1,7 @@
 import os
 import firebase_admin
 from firebase_admin import credentials, storage
-from datetime import datetime
+from datetime import datetime, timezone
 import xml.etree.ElementTree as ET
 from email.utils import formatdate
 from dotenv import load_dotenv
@@ -36,9 +36,9 @@ def force_update_feed():
             # Tenta extrair data do nome (episodio_boletim_YYYY-MM-DD.mp3)
             try:
                 data_str = blob.name.split("_")[-1].replace(".mp3", "")
-                data_obj = datetime.strptime(data_str, "%Y-%m-%d")
+                data_obj = datetime.strptime(data_str, "%Y-%m-%d").replace(tzinfo=timezone.utc)
             except:
-                # Se falhar, usa a data de criação do arquivo
+                # Se falhar, usa a data de criação do arquivo (já vem com timezone)
                 data_obj = blob.time_created
             
             # Torna o blob público para pegar o link
