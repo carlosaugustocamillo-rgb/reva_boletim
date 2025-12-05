@@ -9,6 +9,8 @@ from boletim_service import rodar_boletim
 from campanha_service import criar_campanha_tematica
 from simple_agent import run_agent, AgentInput
 from pydantic import BaseModel
+import firebase_admin
+from firebase_admin import credentials, storage
 
 class CampanhaInput(BaseModel):
     tema: str
@@ -117,7 +119,20 @@ def trigger_feed_update():
 def listar_episodios():
     """Lista os últimos 5 episódios do Firebase com link de download."""
     try:
+        # Garante inicialização (caso não tenha rodado via boletim_service)
+        if not firebase_admin._apps:
+            cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON", "firebase_credentials.json")
+            if os.path.exists(cred_path):
+                cred = credentials.Certificate(cred_path)
+                firebase_admin.initialize_app(cred, {
+                    'storageBucket': os.environ.get("FIREBASE_BUCKET_NAME")
+                })
+        
         bucket = storage.bucket()
+        # Debug: Listar tudo para ver se o prefixo está certo
+        # blobs = list(bucket.list_blobs(prefix="episodios/"))
+        # print(f"DEBUG: Encontrados {len(blobs)} blobs em episodios/")
+        
         blobs = bucket.list_blobs(prefix="episodios/")
         lista = []
         for blob in blobs:
