@@ -241,6 +241,7 @@ def obter_proximo_tema_csv():
         is_used = row.get('Used', '').strip()
         if not is_used:
             tema_escolhido = row.get('Title', row.get('Theme', 'Tema Genérico'))
+            formato_escolhido = row.get('Format', 'Carrossel')
             # Marca como usado
             rows[i]['Used'] = datetime.now().isoformat()
             idx_escolhido = i
@@ -253,20 +254,92 @@ def obter_proximo_tema_csv():
             writer.writeheader()
             writer.writerows(rows)
         print(f"📅 Tema do Calendário Selecionado: {tema_escolhido}")
+        return {
+            "tema": tema_escolhido,
+            "formato": formato_escolhido
+        }
     else:
         print("⚠️ Todos os temas do calendário já foram usados!")
+        return None
 
-    return tema_escolhido
+def gerar_conteudo_instagram(tema, formato, referencias_text):
+    """
+    Gera conteúdo para Instagram baseado no formato (Reel ou Carrossel).
+    Retorna lista de assets (URLs ou Texto).
+    """
+    print(f"📸 Gerando conteúdo para Instagram ({formato})...")
+    assets = []
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    
+    try:
+        if formato.lower() == "reel":
+            # Gera Roteiro
+            prompt = f"""
+            Crie um roteiro viral para Instagram Reels sobre: "{tema}".
+            Baseado nestas referências: {referencias_text}
+            
+            Estrutura:
+            1. Gancho (0-3s): Algo impactante visual e auditivo.
+            2. Desenvolvimento (30-45s): Explicação rápida e dinâmica.
+            3. Call to Action (CTA): Convite para ler a legenda ou seguir.
+            4. Legenda sugerida para o post (com hashtags).
+            
+            Formato: Markdown.
+            """
+            model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+            roteiro = model.generate_content(prompt).text
+            
+            # Salva MD e sobe pro Firebase
+            filename = f"instagram_reel_{timestamp}.md"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(roteiro)
+            
+            url = upload_file(filename, f"instagram/{filename}")
+            if os.path.exists(filename): os.remove(filename)
+            
+            assets.append({"type": "roteiro", "url": url, "name": "Roteiro do Reel"})
+            
+        elif formato.lower() == "carrossel":
+            # Gera 4-5 Imagens (Capa + Conteúdo + CTA)
+            slides_prompts = [
+                f"Slide 1 (Cover): Title '{tema}'. Clean, bold typography, medical background style. Text in Portuguese.",
+                f"Slide 2: Key concept about '{tema}'. Educational diagram style. Text in Portuguese.",
+                f"Slide 3: Practical tip about '{tema}'. Iconography style. Text in Portuguese.",
+                f"Slide 4: Conclusion/Summary about '{tema}'. Minimalist. Text in Portuguese.",
+                f"Slide 5 (CTA): Text 'Gostou? Siga @revalidatie'. Social media engagement style. Text in Portuguese."
+            ]
+            
+            print(f"   🖼️ Gerando 5 slides para carrossel...")
+            for i, p_prompt in enumerate(slides_prompts):
+                full_prompt = f"Create an Instagram Carousel Slide (1080x1080). {p_prompt}. High quality, professional health clinic branding (Teal/Lavender colors)."
+                
+                # Tenta gerar com Gemini 3 (reusa função existente mas adaptada ou chama direto)
+                # Vamos chamar gerar_imagem mas precisamos garantir que use o Gemini 3 para texto
+                # A função gerar_imagem já usa 'gemini-3-pro-image-preview'.
+                
+                slider_name = f"slide_{i+1}_{timestamp}"
+                url = gerar_imagem(full_prompt, slider_name)
+                assets.append({"type": "image", "url": url, "name": f"Slide {i+1}"})
+                
+    except Exception as e:
+        print(f"❌ Erro ao gerar conteúdo Instagram: {e}")
+        assets.append({"type": "error", "content": str(e)})
+        
+    return assets
 
 def criar_campanha_revamais(tema=None):
+    formato_instagram = "Carrossel" # Default
+
     # Se não veio tema, tenta pegar do CSV
     if not tema or tema == "auto":
         print("🤖 Modo Automático: Buscando tema no calendário editorial...")
-        tema = obter_proximo_tema_csv()
-        if not tema:
+        dados_csv = obter_proximo_tema_csv()
+        if not dados_csv:
             return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
+        tema = dados_csv['tema']
+        formato_instagram = dados_csv.get('formato', 'Carrossel')
             
-    print(f"🚀 Iniciando Reva +: {tema}")
+    print(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
     # 1. Traduzir tema para busca
     try:
@@ -289,6 +362,11 @@ def criar_campanha_revamais(tema=None):
     
     # 4. Gerar Texto
     html_texto = gerar_conteudo_revamais(tema, referencias)
+
+    # 4.5 Gerar Conteúdo Instagram (Extra)
+    # Extrai texto das referências para passar de contexto
+    refs_text_context = "\n".join([r['texto'] for r in referencias])
+    instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context)
     
     # 5. Montar HTML Final
     # Logo da Revalidatie (usado no boletim_service.py)
@@ -364,7 +442,9 @@ def criar_campanha_revamais(tema=None):
             "campaign_id": campaign['id'], 
             "url_capa": url_capa,
             "url_corpo": url_corpo,
-            "custo_estimado": estimar_custo_revamais()
+            "custo_estimado": estimar_custo_revamais(),
+            "instagram_assets": instagram_assets,
+            "instagram_format": formato_instagram
         }
         }
     except Exception as e:
