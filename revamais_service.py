@@ -300,16 +300,18 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
             assets.append({"type": "roteiro", "url": url, "name": "Roteiro do Reel"})
             
         elif formato.lower() == "carrossel":
-            # Gera 4-5 Imagens (Capa + Conteúdo + CTA)
+            # Gera 7 Imagens (Capa + Conteúdo Profundo + CTA)
             slides_prompts = [
-                f"Slide 1 (Cover): Title '{tema}'. Clean, bold typography, medical background style. Text in Portuguese.",
-                f"Slide 2: Key concept about '{tema}'. Educational diagram style. Text in Portuguese.",
-                f"Slide 3: Practical tip about '{tema}'. Iconography style. Text in Portuguese.",
-                f"Slide 4: Conclusion/Summary about '{tema}'. Minimalist. Text in Portuguese.",
-                f"Slide 5 (CTA): Text 'Gostou? Siga @revalidatie'. Social media engagement style. Text in Portuguese."
+                f"Slide 1 (Cover): Title '{tema}'. Clean, bold typography, medical background. Text in Portuguese.",
+                f"Slide 2: Introduction/Context about '{tema}'. Short text in Portuguese.",
+                f"Slide 3: Scientific Explanation (What science says). Educational diagram. Text in Portuguese.",
+                f"Slide 4: Deep Dive/Mechanism (Why it happens). Detailed infographic style. Text in Portuguese.",
+                f"Slide 5: Practical Tip #1 about '{tema}'. Iconography style. Text in Portuguese.",
+                f"Slide 6: Practical Tip #2 or Checklist. Clean list style. Text in Portuguese.",
+                f"Slide 7 (CTA): Conclusion & Text 'Gostou? Siga @revalidatie'. Text in Portuguese."
             ]
             
-            print(f"   🖼️ Gerando 5 slides para carrossel...")
+            print(f"   🖼️ Gerando 7 slides para carrossel...")
             for i, p_prompt in enumerate(slides_prompts):
                 full_prompt = f"Create an Instagram Carousel Slide (1080x1080). {p_prompt}. High quality, professional health clinic branding (Teal/Lavender colors)."
                 
