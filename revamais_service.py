@@ -8,6 +8,9 @@ from openai import OpenAI
 from Bio import Entrez
 import mailchimp_marketing as MailchimpMarketing
 from mailchimp_marketing.api_client import ApiClientError
+import csv
+import shutil
+from tempfile import NamedTemporaryFile
 
 # Importa ferramentas já existentes
 from firebase_service import upload_file
@@ -203,7 +206,66 @@ def gerar_conteudo_revamais(tema, referencias):
     
     return html_content + "<hr>" + refs_html
 
-def criar_campanha_revamais(tema):
+    return html_content + "<hr>" + refs_html
+
+def obter_proximo_tema_csv():
+    """
+    Lê o arquivo 'calendario_editorial_150_semanas.csv', pega o próximo tema
+    não utilizado, marca como usado e retorna o Título.
+    """
+    csv_filename = "calendario_editorial_150_semanas.csv"
+    csv_path = os.path.join(os.path.dirname(__file__), csv_filename)
+    
+    if not os.path.exists(csv_path):
+        print(f"⚠️ Arquivo {csv_filename} não encontrado.")
+        return None
+        
+    tema_escolhido = None
+    rows = []
+    headers = []
+    
+    # Lê todo o arquivo
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        headers = reader.fieldnames
+        # Garante que coluna 'Used' exista nos headers
+        if 'Used' not in headers:
+            headers.append('Used')
+        
+        for row in reader:
+            rows.append(row)
+            
+    # Procura o primeiro não usado
+    idx_escolhido = -1
+    for i, row in enumerate(rows):
+        is_used = row.get('Used', '').strip()
+        if not is_used:
+            tema_escolhido = row.get('Title', row.get('Theme', 'Tema Genérico'))
+            # Marca como usado
+            rows[i]['Used'] = datetime.now().isoformat()
+            idx_escolhido = i
+            break
+    
+    if tema_escolhido:
+        # Salva o arquivo atualizado
+        with open(csv_path, 'w', encoding='utf-8', newline='') as f:
+            writer = csv.DictWriter(f, fieldnames=headers)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"📅 Tema do Calendário Selecionado: {tema_escolhido}")
+    else:
+        print("⚠️ Todos os temas do calendário já foram usados!")
+
+    return tema_escolhido
+
+def criar_campanha_revamais(tema=None):
+    # Se não veio tema, tenta pegar do CSV
+    if not tema or tema == "auto":
+        print("🤖 Modo Automático: Buscando tema no calendário editorial...")
+        tema = obter_proximo_tema_csv()
+        if not tema:
+            return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
+            
     print(f"🚀 Iniciando Reva +: {tema}")
     
     # 1. Traduzir tema para busca
@@ -230,9 +292,8 @@ def criar_campanha_revamais(tema):
     
     # 5. Montar HTML Final
     # Logo da Revalidatie (usado no boletim_service.py)
-    # Logo da Revalidatie
     # Se o usuário definir uma no .env, usa. Senão, usa a padrão.
-    DEFAULT_LOGO = "https://i.imgur.com/6FIUeHX.png"
+    DEFAULT_LOGO = "https://i.imgur.com/5ocjGbI.png"
     logo_url = os.environ.get("REVA_LOGO_URL", DEFAULT_LOGO)
     
     html_email = f"""

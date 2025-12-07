@@ -14,7 +14,7 @@ import firebase_admin
 from firebase_admin import credentials, storage
 
 class CampanhaInput(BaseModel):
-    tema: str
+    tema: str = ""
 
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
