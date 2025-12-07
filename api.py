@@ -22,7 +22,14 @@ app = FastAPI(title="RevaCast Boletim Service")
 # Configuração de CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "https://revalidatie.com.br",
+        "https://www.revalidatie.com.br",
+        "https://reva-boletim-production.up.railway.app",
+        "*"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
