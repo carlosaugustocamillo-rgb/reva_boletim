@@ -224,15 +224,23 @@ def criar_revamais_endpoint(input_data: CampanhaInput):
     """
     Cria uma edição do Reva + (newsletter temática).
     """
+    print(f"🔎 DEBUG: Request recebido no endpoint /criar-revamais. Tema: {input_data.tema}")
     try:
         from revamais_service import criar_campanha_revamais
         resultado = criar_campanha_revamais(input_data.tema)
-        return JSONResponse(content={"success": True, "resultado": resultado})
+        
+        # Força Header CORS manual (Cinto e Suspensórios)
+        response = JSONResponse(content={"success": True, "resultado": resultado})
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
     except Exception as e:
-        return JSONResponse(
+        print(f"❌ DEBUG: Erro no endpoint: {e}")
+        response = JSONResponse(
             status_code=500,
             content={"success": False, "erro": str(e)},
         )
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
 
 # --- Endpoint Antigo (Mantido para compatibilidade) ---
 @app.get("/rodar-boletim-stream")
