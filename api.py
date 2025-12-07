@@ -28,8 +28,8 @@ app.add_middleware(
         "https://revalidatie.com.br",
         "https://www.revalidatie.com.br",
         "https://reva-boletim-production.up.railway.app",
-        "*"
     ],
+    allow_origin_regex="https://.*\\.webcontainer-api\\.io",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -231,7 +231,6 @@ def criar_revamais_endpoint(input_data: CampanhaInput):
         
         # Força Header CORS manual (Cinto e Suspensórios)
         response = JSONResponse(content={"success": True, "resultado": resultado})
-        response.headers["Access-Control-Allow-Origin"] = "*"
         return response
     except Exception as e:
         print(f"❌ DEBUG: Erro no endpoint: {e}")
@@ -239,7 +238,6 @@ def criar_revamais_endpoint(input_data: CampanhaInput):
             status_code=500,
             content={"success": False, "erro": str(e)},
         )
-        response.headers["Access-Control-Allow-Origin"] = "*"
         return response
 
 # --- Endpoint Antigo (Mantido para compatibilidade) ---
