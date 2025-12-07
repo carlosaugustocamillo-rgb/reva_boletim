@@ -448,7 +448,6 @@ def criar_campanha_revamais(tema=None):
             "instagram_assets": instagram_assets,
             "instagram_format": formato_instagram
         }
-        }
     except Exception as e:
         print(f"❌ Erro Mailchimp: {e}")
         return {"status": "error", "message": str(e)}
