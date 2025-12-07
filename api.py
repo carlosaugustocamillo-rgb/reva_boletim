@@ -35,6 +35,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/ping")
+def ping():
+    return {"status": "ok", "version": "with_cors_fix_v2", "cors": "enabled"}
+
 # --- Armazenamento em ARQUIVO para tarefas em background (Persistência) ---
 import os
 import json
