@@ -402,10 +402,22 @@
                                 `;
                                 logDiv.innerHTML += downloadBtn;
                             }
+
+                            if (data.result && data.result.custos) {
+                                const custos = data.result.custos;
+                                logDiv.innerHTML += `
+                                    <div style="margin-top: 15px; padding: 10px; background: #e8f5e9; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724;">
+                                        <strong>💰 Custo Estimado desta Execução:</strong><br>
+                                        Custo Total: <strong>R$ ${custos.estimativa_brl}</strong> (aprox. $${custos.estimativa_usd})<br>
+                                        <small>${custos.detalhe}</small>
+                                    </div>
+                                `;
+                                logDiv.scrollTop = logDiv.scrollHeight;
+                            }
                         } else if (data.status === 'canceled') {
                             statusDiv.className = 'error';
                             statusDiv.innerHTML = '🛑 <strong>Cancelado:</strong><br>O processo foi interrompido pelo usuário.';
-                        } else {
+                        } else { // This covers data.status === 'error'
                             statusDiv.className = 'error';
                             statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>Ocorreu um erro durante o processamento.';
                         }

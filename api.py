@@ -7,6 +7,7 @@ import uuid
 
 from boletim_service import rodar_boletim
 from campanha_service import criar_campanha_tematica
+from revamais_service import criar_campanha_revamais
 from simple_agent import run_agent, AgentInput
 from pydantic import BaseModel
 import firebase_admin
@@ -207,7 +208,22 @@ def get_status_boletim(task_id: str):
         return {"status": "not_found", "message": "Tarefa não encontrada."}
     return task
 
-# --- Endpoint Antigo (Mantido para compatibilidade, mas não recomendado para conexões instáveis) ---
+@app.post("/criar-revamais")
+def criar_revamais_endpoint(input_data: CampanhaInput):
+    """
+    Cria uma edição do Reva + (newsletter temática).
+    """
+    try:
+        from revamais_service import criar_campanha_revamais
+        resultado = criar_campanha_revamais(input_data.tema)
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
+
+# --- Endpoint Antigo (Mantido para compatibilidade) ---
 @app.get("/rodar-boletim-stream")
 def rodar_boletim_stream(
     resumos: bool = True,
@@ -269,6 +285,21 @@ def criar_campanha_endpoint(input_data: CampanhaInput):
     """
     try:
         resultado = criar_campanha_tematica(input_data.tema)
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
+
+
+@app.post("/criar-revamais")
+def criar_revamais_endpoint(input_data: CampanhaInput):
+    """
+    Cria uma edição do boletim 'Reva +' (foco em pacientes).
+    """
+    try:
+        resultado = criar_campanha_revamais(input_data.tema)
         return JSONResponse(content={"success": True, "resultado": resultado})
     except Exception as e:
         return JSONResponse(

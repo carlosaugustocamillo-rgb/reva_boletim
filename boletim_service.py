@@ -1157,16 +1157,44 @@ def rodar_boletim(opcoes=None):
     # ------------------------------------------------------------------
     # 6) RETORNO
     # ------------------------------------------------------------------
+    # ======================================================================
+    # RELATÓRIO DE CUSTOS ESTIMADO
+    # ======================================================================
+    # Preços aproximados (Dez 2024)
+    # Gemini 1.5 Flash: ~$0.075 / 1M tokens (input), $0.30 / 1M tokens (output) -> Quase zero para esse uso
+    # OpenAI GPT-4o: $2.50 / 1M (input), $10.00 / 1M (output)
+    # ElevenLabs: ~$0.30 / 1000 chars (Creator tier aprox) ou variavel
+    # Vamos usar valores conservadores para estimativa
+    
+    # Estimativa de tokens (muito aproximada, pois não pegamos o usage exato de cada call no código atual sem refatorar tudo)
+    # Assumindo média de 3000 tokens input / 1000 tokens output para todo o fluxo de texto (OpenAI + Gemini)
+    custo_texto_estimado = 0.15 # $0.15 fixo como "teto" para texto (GPT-4o + Gemini)
+    
+    # ElevenLabs é o mais caro e mensurável por caracteres
+    custo_audio_estimado = (total_chars_elevenlabs / 1000) * 0.30 # $0.30 por 1k chars (exemplo, ajuste conforme seu plano)
+    
+    custo_total = custo_texto_estimado + custo_audio_estimado
+    
+    moeda_cambio = 6.0 # 1 USD = 6 BRL (margem de segurança)
+    custo_brl = custo_total * moeda_cambio
+
     resultado = {
         "data_referencia": hoje,
         "boletim_path": boletim_path,
         "episodio_path": episodio_path,
         "audio_url": audio_url,
         "rss_url": rss_url,
-        "mailchimp": {"status": mailchimp_status, "error": mailchimp_error}
+        "mailchimp": {"status": mailchimp_status, "error": mailchimp_error},
+        "custos": {
+            "elevenlabs_chars": total_chars_elevenlabs,
+            "estimativa_usd": round(custo_total, 2),
+            "estimativa_brl": round(custo_brl, 2),
+            "detalhe": f"Texto: ~$0.15 | Áudio: ~${custo_audio_estimado:.2f} ({total_chars_elevenlabs} chars)"
+        }
     }
 
     print("✅ Pipeline finalizado.")
+    print(f"💰 Custo Estimado: R$ {custo_brl:.2f}")
     yield resultado
 
 
