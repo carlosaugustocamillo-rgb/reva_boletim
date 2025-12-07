@@ -33,8 +33,8 @@ mc.set_config({
     "api_key": os.environ.get("MC_API_KEY"),
     "server": os.environ.get("MC_SERVER")
 })
-# Tenta pegar ID específico para Reva+, senão usa o padrão (Weekly)
-MC_LIST_ID = os.environ.get("MC_LIST_ID_REVAMAIS") or os.environ.get("MC_LIST_ID")
+# Tenta pegar ID específico para Reva+, senão usa o hardcoded (Reva+ Audience) ou o padrão (Weekly)
+MC_LIST_ID = os.environ.get("MC_LIST_ID_REVAMAIS", "510b954f9a") 
 MC_FROM_NAME = os.environ.get("MC_FROM_NAME", "Revalidatie")
 MC_REPLY_TO = os.environ.get("MC_REPLY_TO", "contato@revalidatie.com.br")
 
