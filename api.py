@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks, Request
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -18,6 +18,17 @@ class CampanhaInput(BaseModel):
 
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
+ 
+@app.middleware("http")
+async def cors_override_middleware(request: Request, call_next):
+    response = await call_next(request)
+    origin = request.headers.get("origin")
+    if origin and "webcontainer-api.io" in origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # Configuração de CORS
 app.add_middleware(
