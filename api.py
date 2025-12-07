@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
@@ -18,19 +18,8 @@ class CampanhaInput(BaseModel):
 
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
- 
-@app.middleware("http")
-async def cors_override_middleware(request: Request, call_next):
-    response = await call_next(request)
-    origin = request.headers.get("origin")
-    if origin and "webcontainer-api.io" in origin:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
 
-# Configuração de CORS
+# Configuração de CORS PRIMEIRO (será "envelopada" pelo middleware manual abaixo)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -40,11 +29,35 @@ app.add_middleware(
         "https://www.revalidatie.com.br",
         "https://reva-boletim-production.up.railway.app",
     ],
-    allow_origin_regex="https://.*\\.webcontainer-api\\.io",
+    # allow_origin_regex removed to avoid conflicts since manual middleware handles it
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+ 
+@app.middleware("http")
+async def cors_override_middleware(request: Request, call_next):
+    origin = request.headers.get("origin")
+    
+    # Se for requisição OPTIONS vinda do WebContainer, responde direto (bypass total)
+    if request.method == "OPTIONS" and origin and "webcontainer-api.io" in origin:
+        response = Response(status_code=200)
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        return response
+
+    response = await call_next(request)
+    
+    # Adiciona headers nas rotas normais também
+    if origin and "webcontainer-api.io" in origin:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Allow-Methods"] = "*"
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        
+    return response
 
 @app.get("/ping")
 def ping():
