@@ -938,6 +938,17 @@ def rodar_boletim(opcoes=None):
                     else:
                         f.write(f"HOST: {dialogo}\n\n")
             print(f"✅ Roteiro completo salvo como: {roteiro_path}")
+            
+            # Salva também em JSON estruturado para permitir reuso (ex: Firebase ou edição futura)
+            import json
+            roteiro_json_path = os.path.join(BASE_DIR, "roteiros", f"roteiro_estruturado_{hoje}.json")
+            try:
+                os.makedirs(os.path.dirname(roteiro_json_path), exist_ok=True)
+                with open(roteiro_json_path, "w", encoding="utf-8") as f:
+                    json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
+                print(f"✅ Roteiro JSON salvo em: {roteiro_json_path}")
+            except Exception as e:
+                print(f"❌ Erro ao salvar JSON do roteiro: {e}")
         else:
             yield "⏭️ Pulando geração de Roteiro."
 
@@ -1021,7 +1032,8 @@ def rodar_boletim(opcoes=None):
                         estudo_combinado.export(caminho_estudo, format="mp3")
                         audio_paths.append(caminho_estudo)
                         
-                        for temp_path in estudo_audios: os.remove(temp_path)
+                        # Mantendo arquivos temporários para permitir edição/remixagem posterior
+                        # for temp_path in estudo_audios: os.remove(temp_path)
                 except Exception as e:
                     print(f"Erro audio: {e}")
 
