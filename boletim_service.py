@@ -996,9 +996,9 @@ def rodar_boletim(opcoes=None):
                             text=text,
                             model_id="eleven_turbo_v2_5",
                             voice_settings=VoiceSettings(
-                                stability=0.40,       # Reduzido para ser mais solto/rápido
-                                similarity_boost=0.80, 
-                                style=0.60,           # Aumentado para mais expressividade
+                                stability=0.75,       # Aumentado para garantir consistência
+                                similarity_boost=0.75, 
+                                style=0.0,            # Zero para evitar variações estranhas
                                 use_speaker_boost=True
                             )
                         )
