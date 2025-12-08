@@ -138,6 +138,9 @@ def processar_boletim_background(task_id: str, opcoes: dict):
         task_state["logs"].append("✅ Processo finalizado com sucesso.")
         save_task(task_id, task_state)
         
+    except Exception as e:
+        import traceback
+        error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
         task_state["status"] = "error"
         task_state["logs"].append(error_msg)
         save_task(task_id, task_state)
