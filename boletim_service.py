@@ -645,7 +645,17 @@ def rodar_boletim(opcoes=None):
     revisao_path = os.path.join(BASE_DIR, f"boletim_para_revisao_{hoje}.txt")
     boletim_detalhado_path = os.path.join(BASE_DIR, f"boletim_detalhado_{hoje}.txt")
     roteiro_path = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}.txt")
-    episodio_path = os.path.join(BASE_DIR, f"episodio_boletim_{hoje}.mp3")
+    base_episodio_name = f"episodio_boletim_{hoje}"
+    episodio_filename = f"{base_episodio_name}.mp3"
+    episodio_path = os.path.join(AUDIO_DIR, episodio_filename) # Usando AUDIO_DIR para manter organizado
+    if not os.path.exists(AUDIO_DIR): os.makedirs(AUDIO_DIR, exist_ok=True)
+    
+    # Versionamento: se já existe, cria _1, _2...
+    counter = 1
+    while os.path.exists(episodio_path):
+        episodio_filename = f"{base_episodio_name}_{counter}.mp3"
+        episodio_path = os.path.join(AUDIO_DIR, episodio_filename)
+        counter += 1
 
     # Variáveis de estado para passar entre etapas
     roteiros_audio = []
@@ -967,8 +977,9 @@ def rodar_boletim(opcoes=None):
         total_chars_elevenlabs = 0
         
         if os.path.exists(episodio_path):
-            yield f"⚠️ Áudio já encontrado! Pulando geração para economizar."
-        elif roteiros_audio:
+             yield f"⚠️ Áudio já encontrado! (Isso não deve acontecer com versionamento)"
+             
+        if roteiros_audio:
             yield "🎙️ Gerando Áudio (ElevenLabs)..."
             audio_paths = []
             
