@@ -42,7 +42,7 @@ async def cors_override_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     
     # Lista de domínios permitidos dinamicamente
-    allowed_domains = ["webcontainer-api.io", "stackblitz.com", "stackblitz.io", "stackblitz.workers.dev"]
+    allowed_domains = ["webcontainer-api.io", "stackblitz.com", "stackblitz.io", "stackblitz.workers.dev", "localhost"]
     
     # Verifica se a origem bate com algum dos domínios permitidos
     is_allowed = False
