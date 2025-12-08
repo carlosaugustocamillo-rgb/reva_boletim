@@ -89,7 +89,7 @@ from elevenlabs import VoiceSettings
 
 # --- ElevenLabs ---
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "k0eIjUFv1GH1DnJFJK46")
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "tnSpp4vdxKPjI9w0GnoV")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
@@ -275,9 +275,9 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False)
     
     # Define se é o primeiro estudo ou não para ajustar a transição
     if idx == 0:
-        contexto_inicial = "Este é o PRIMEIRO estudo do episódio. Comece direto apresentando o estudo, sem saudações."
+        contexto_inicial = "Este é o PRIMEIRO estudo do episódio. O HOST DEVE começar com uma frase de ânimo tipo 'Vamos lá então, pessoal! O nosso 1o estudo de hoje fala sobre...' ou similar."
     else:
-        contexto_inicial = f"Este é o estudo número {idx + 1}. NÃO faça saudações. Comece DIRETO com uma transição natural tipo 'Agora vamos falar de outro estudo...' ou 'O próximo artigo trata de...'."
+        contexto_inicial = f"Este é o estudo número {idx + 1}. O HOST DEVE começar com uma transição natural tipo 'Bom, vamos em frente... nesse próximo estudo...' ou 'Seguindo nossa pauta...'."
     
     # Define se deve ter despedida no final
     if is_last:
@@ -286,34 +286,22 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False)
         contexto_final = "NÃO finalize o podcast. Deixe a conversa aberta para o próximo estudo."
     
     prompt = f"""
-Você é um roteirista sênior do RevaCast Weekly. Seu objetivo é transformar um resumo científico em uma CONVERSA EXTREMAMENTE NATURAL e ENGAJANTE, no estilo "NotebookLM Audio Overview".
+Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
 
-O tom deve ser de dois colegas/amigos apaixonados por ciência conversando no corredor ou num café. Nada de "palestra" ou "leitura de texto".
+Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo este estudo científico.
 
-PERSONAGENS:
-- HOST (IVO): Especialista, entusiasta, traz a novidade com energia ("Cara, olha que incrível isso aqui"). Voz masculina.
-- COHOST (MANU): Curiosa, inteligente, reage com emoção ("Sério?", "Não acredito!", "Uau"), faz perguntas pertinentes e tenta conectar os pontos. Voz feminina.
-
-REGRAS DE ESTILO (CRUCIAIS):
-1. USE LINGUAGEM FALADA REAL: Use marcadores de discurso ("Então", "Sabe...", "Olha só", "Pois é").
-2. REAÇÕES GENUÍNAS: Se o resultado for bom, o COHOST deve ficar impressionado. Se for polêmico, deve ficar surpreso.
-3. FLUIDEZ: Uma fala deve "enganchar" na outra. Evite perguntas e respostas robóticas (tipo ping-pong).
-4. SEM FORMALIDADES: Evite "O estudo concluiu que". Prefira "O que eles descobriram foi...", "O mais louco é que...".
-5. EXPLICAR O "PORQUÊ": Não jogue apenas dados. Explique o impacto prático disso.
-
-REGRAS DE SEGURANÇA (CRÍTICO - RISCO DE ALUCINAÇÃO):
-- CRIATIVIDADE APENAS NO TOM E NA CONVERSA.
-- RIGOR ABSOLUTO NOS DADOS: Números, p-values, tamanhos de amostra e resultados devem ser COPIADOS EXATAMENTE do resumo.
-- PROIBIDO INVENTAR: Se o resumo não diz "melhorou 20%", NÃO invente "melhorou muito" ou "20%". Diga apenas "houve melhora significativa".
-- Se não souber um dado, o COHOST deve perguntar e o HOST deve dizer "O resumo não especifica esse detalhe".
-
-REGRAS TÉCNICAS:
+REGRAS OBRIGATÓRIAS:
+- NUNCA invente dados, números ou resultados que não estejam no resumo
 - {contexto_inicial}
 - {contexto_final}
-- SEM SAUDAÇÕES ("Olá", "Bem-vindos").
-- SEM APRESENTAÇÕES ("Eu sou o Guto").
-- Duração: 6 a 10 trocas de fala (para dar tempo de aprofundar um pouco).
-- Use as abreviações formatadas: D.P.O.C., V.E.F.1, I.M.C.
+- NÃO use saudações genéricas como "Olá", "Oi", "Bem-vindos" (apenas as frases de transição especificadas acima).
+- NÃO se apresente ou reapresente.
+- Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos.
+- O HOST apresenta o estudo, o COHOST faz perguntas e comenta.
+- Mantenha informal mas profissional.
+- De 5 a 8 falas no total (alternando entre HOST e COHOST).
+- Cada fala deve ter 1-3 frases curtas e diretas.
+- Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1).
 
 Contexto do estudo:
 Título: {titulo}
@@ -323,23 +311,25 @@ Resumo traduzido:
 {resumo_pt}
 
 FORMATO DE RETORNO (JSON array):
+Retorne APENAS um array JSON válido, sem texto adicional e sem ```json```. Exemplo:
 [
-  {{"speaker": "HOST", "text": "Cara, você não vai acreditar nesse estudo sobre DPOC que saiu..."}},
-  {{"speaker": "COHOST", "text": "Sério? O que tem de novo? É sobre reabilitação?"}},
-  {{"speaker": "HOST", "text": "Exatamente! Eles pegaram um grupo enorme e..."}}
+  {{"speaker": "HOST", "text": "Vamos lá então, pessoal! O primeiro estudo..."}},
+  {{"speaker": "COHOST", "text": "Legal! O que eles investigaram?"}},
+  {{"speaker": "HOST", "text": "Eles analisaram..."}},
+  {{"speaker": "COHOST", "text": "E quais foram os resultados?"}}
 ]
 """
 
     resposta = client.chat.completions.create(
-        model="gpt-5.1",
+        model="gpt-4o", # ou gpt-5.1
         messages=[
             {
                 "role": "system",
-                "content": "Você é um roteirista de podcast. Retorne SEMPRE e SOMENTE um JSON array válido com o diálogo. NUNCA use saudações ou apresentações."
+                "content": "Você é um roteirista de podcast. Retorne SEMPRE e SOMENTE um JSON array válido com o diálogo."
             },
             {"role": "user", "content": prompt}
         ],
-        temperature=0.85,
+        temperature=0.7,
     )
     
     import json
