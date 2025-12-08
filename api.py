@@ -138,13 +138,56 @@ def processar_boletim_background(task_id: str, opcoes: dict):
         task_state["logs"].append("✅ Processo finalizado com sucesso.")
         save_task(task_id, task_state)
         
+        task_state["status"] = "error"
+        task_state["logs"].append(error_msg)
+        save_task(task_id, task_state)
+        print(error_msg)
+
+def processar_revamais_background(task_id: str, tema: str):
+    """Função wrapper para Reva+ em background."""
+    task_state = {"status": "running", "logs": [], "result": None}
+    save_task(task_id, task_state)
+    
+    def log_callback(msg):
+        task_state["logs"].append(msg)
+        save_task(task_id, task_state)
+        
+    def check_cancel():
+        current = load_task(task_id)
+        if current and current.get("status") == "canceling":
+            task_state["status"] = "canceled"
+            task_state["logs"].append("🛑 Cancelado pelo usuário.")
+            save_task(task_id, task_state)
+            return True
+        return False
+        
+    try:
+        from revamais_service import criar_campanha_revamais
+        resultado = criar_campanha_revamais(tema, log_callback=log_callback, check_cancel=check_cancel)
+        
+        # Se retornou sucesso/erro (dict)
+        if isinstance(resultado, dict):
+            if resultado.get("status") == "error":
+                task_state["status"] = "error"
+            else:
+                task_state["status"] = "completed"
+            task_state["result"] = resultado
+            task_state["logs"].append("✅ Processo Reva+ finalizado.")
+        else:
+            task_state["status"] = "completed"
+            
+        save_task(task_id, task_state)
+        
     except Exception as e:
+        if str(e) == "CANCELADO_PELO_USUARIO":
+             return # Já salvou status canceled no check_cancel
+             
         import traceback
         error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
         task_state["status"] = "error"
         task_state["logs"].append(error_msg)
         save_task(task_id, task_state)
-        print(error_msg)
+
 
 @app.post("/cancelar-boletim/{task_id}")
 def cancelar_boletim(task_id: str):
@@ -254,6 +297,28 @@ def iniciar_boletim(
         "status": "started",
         "message": "Boletim iniciado em segundo plano. Verifique o status com o ID fornecido."
     }
+
+@app.post("/iniciar-revamais")
+def iniciar_revamais(
+    background_tasks: BackgroundTasks,
+    input_data: CampanhaInput
+):
+    task_id = str(uuid.uuid4())
+    
+    # Cria estado inicial
+    save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando Reva+ ..."], "result": None})
+    
+    background_tasks.add_task(processar_revamais_background, task_id, input_data.tema)
+    
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "message": "Reva+ iniciado em background."
+    }
+    
+@app.post("/cancelar-tarefa/{task_id}")
+def cancelar_tarefa_generica(task_id: str):
+    return cancelar_boletim(task_id) # Reutiliza a mesma lógica
 
 @app.get("/status-boletim/{task_id}")
 def get_status_boletim(task_id: str):
