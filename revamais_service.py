@@ -403,6 +403,8 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     DEFAULT_LOGO = "https://i.imgur.com/in5MW0g.png"
     logo_url = os.environ.get("REVA_LOGO_URL", DEFAULT_LOGO)
     
+    today_formatted = datetime.now().strftime('%d/%m/%Y')
+    
     html_email = f"""
     <!DOCTYPE html>
     <html>
@@ -412,6 +414,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             .container {{ background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px; }}
             .logo-header {{ text-align: center; margin-bottom: 20px; }}
             .logo-header img {{ max-width: 200px; height: auto; }}
+            .header-intro {{ text-align: center; margin-bottom: 20px; font-size: 14px; color: #555; }}
             .header-img {{ width: 100%; border-radius: 8px 8px 0 0; display: block; }}
             .body-img {{ width: 100%; margin: 20px 0; border-radius: 8px; }}
             h1 {{ color: #205776; }}
@@ -419,6 +422,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             a {{ color: #205776; text-decoration: none; font-weight: bold; }}
             .footer {{ font-size: 12px; color: #777; text-align: center; margin-top: 30px; }}
             .cta-box {{ background-color: #eef6fa; padding: 15px; border-radius: 8px; text-align: center; margin: 20px 0; border: 1px solid #cce0eb; }}
+            .references {{ margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee; font-size: 12px; color: #666; }}
         </style>
     </head>
     <body>
@@ -427,6 +431,11 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
                 <a href="https://www.revalidatie.com.br" target="_blank">
                     <img src="{logo_url}" alt="Revalidatie">
                 </a>
+            </div>
+            
+            <div class="header-intro">
+                <p><strong>Olá, *|FNAME|*!</strong><br>
+                Aqui está sua atualização semanal de saúde do Reva + para {today_formatted}.</p>
             </div>
             
             <img src="{url_capa}" class="header-img" alt="Capa">
@@ -438,13 +447,22 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
-                    <p><a href="https://www.instagram.com/revalidatie/" target="_blank">Siga-nos no Instagram</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
+                    <p><a href="https://www.instagram.com/revalidatie_londrina/" target="_blank">Siga-nos no Instagram @revalidatie_londrina</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
+                </div>
+
+                <!-- Referências Científicas -->
+                <div class="references">
+                    <h4>📚 Referências Científicas Utilizadas:</h4>
+                    <ul>
+                    {''.join([f"<li>{r['texto']} <a href='{r['link']}' target='_blank'>[PubMed]</a></li>" for r in referencias]) if referencias else "<li>Referências não disponíveis neste momento.</li>"}
+                    </ul>
                 </div>
             </div>
         </div>
         
         <div class="footer">
             <p>Reva + | Revalidatie<br>
+            Londrina - PR<br>
             <a href="*|UNSUB|*">Descadastrar</a></p>
         </div>
     </body>
