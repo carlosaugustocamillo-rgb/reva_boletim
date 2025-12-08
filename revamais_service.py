@@ -149,6 +149,101 @@ def gerar_imagem(prompt, nome_arquivo_prefixo):
     except Exception as e:
         print(f"   ❌ Erro Upload: {e}")
         return "https://via.placeholder.com/600x400?text=Erro+Upload"
+    
+# --- Novos Imports para Manipulação de Imagem ---
+from PIL import Image, ImageDraw, ImageFont
+import io
+
+def download_font():
+    """Baixa fonte Roboto-Bold para garantir consistência visual em Linux/Railway"""
+    font_path = "Roboto-Bold.ttf"
+    if not os.path.exists(font_path):
+        print("📥 Baixando fonte Roboto-Bold...")
+        url = "https://github.com/google/fonts/raw/main/apache/roboto/Roboto-Bold.ttf"
+        r = requests.get(url)
+        with open(font_path, "wb") as f: f.write(r.content)
+    return font_path
+
+def download_logo(url):
+    """Baixa o logo para um arquivo temporário"""
+    r = requests.get(url)
+    img = Image.open(io.BytesIO(r.content)).convert("RGBA")
+    return img
+
+def gerar_banner_header(logo_url):
+    """
+    Gera um banner composto: 600x250
+    Fundo: Branco/Cinza claro.
+    Esquerda: Card arredondado Azul Escuro (#205776) com texto REVA +.
+    Direita: Texto "Boletim de Saúde" e Logo Revalidatie no canto.
+    """
+    try:
+        W, H = 600, 250
+        # Cor de fundo (bg do email é #ffffff, container #ffffff. Vamos usar #f4f6f8 para contraste sutil ou branco)
+        bg_color = (255, 255, 255) 
+        
+        # Cria imagem base
+        im = Image.new("RGBA", (W, H), bg_color)
+        draw = ImageDraw.Draw(im)
+        
+        # Downloads
+        font_path = download_font()
+        logo_img = download_logo(logo_url)
+        
+        # --- Lado Esquerdo: Card "Reva +" ---
+        card_color = (32, 87, 118) # #205776
+        margin = 20
+        card_w = 260
+        card_h = H - (2 * margin)
+        
+        # Desenha retângulo arredondado (simulado)
+        x0, y0 = margin, margin
+        x1, y1 = margin + card_w, H - margin
+        draw.rectangle([x0, y0, x1, y1], fill=card_color, outline=None)
+        
+        # Texto "Reva +"
+        font_reva = ImageFont.truetype(font_path, 50)
+        draw.text((x0 + 40, y0 + 60), "Reva", fill="white", font=font_reva)
+        
+        font_plus = ImageFont.truetype(font_path, 70)
+        draw.text((x0 + 160, y0 + 45), "+", fill="#4ecdc4", font=font_plus) # Destaque ciano
+        
+        font_sub = ImageFont.truetype(font_path, 14)
+        draw.text((x0 + 40, y0 + 130), "BOLETIM CIENTÍFICO", fill="#a8cce0", font=font_sub)
+
+        # --- Lado Direito: "Boletim de Saúde" + Logo ---
+        
+        # Texto descritivo
+        font_title = ImageFont.truetype(font_path, 32)
+        text_color = (32, 87, 118)
+        draw.text((320, 60), "Boletim de", fill=text_color, font=font_title)
+        draw.text((320, 100), "Saúde", fill=text_color, font=font_title)
+        
+        # Logo Revalidatie (Redimensionar)
+        # Manter aspect ratio. Max width 180, max height 60
+        logo_img.thumbnail((200, 80), Image.Resampling.LANCZOS)
+        
+        # Posicionar no canto inferior direito
+        logo_w, logo_h = logo_img.size
+        logo_x = W - logo_w - 30
+        logo_y = H - logo_h - 30
+        
+        # Paste (usando a própria imagem como máscara alpha para transparência)
+        im.paste(logo_img, (logo_x, logo_y), logo_img)
+        
+        # Salva e Upload
+        temp_filename = f"header_revamais_{datetime.now().strftime('%H%M%S')}.png"
+        im.save(temp_filename, "PNG")
+        
+        firebase_path = f"revamais/assets/{temp_filename}"
+        url = upload_file(temp_filename, firebase_path)
+        if os.path.exists(temp_filename): os.remove(temp_filename)
+        
+        return url
+        
+    except Exception as e:
+        print(f"❌ Erro ao gerar banner header: {e}")
+        raise e
 
 def estimar_custo_revamais():
     # Estimativa:
@@ -411,6 +506,15 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     # 3. Gerar Imagens
     log("🎨 Gerando assets visuais (isso pode demorar)...")
     
+    # Gerar Banner Composto (Header)
+    try:
+        log("🖼️ Criando banner de cabeçalho personalizado...")
+        logo_url_base = os.environ.get("REVA_LOGO_URL", "https://i.imgur.com/in5MW0g.png")
+        url_header = gerar_banner_header(logo_url_base)
+    except Exception as e:
+        log(f"⚠️ Falha ao criar banner composto: {e}. Usando logo padrão.")
+        url_header = logo_url_base
+
     # Capa: SEM TEXTO, apenas visual
     prompt_capa = f"A welcoming, modern health illustration about '{tema_ingles}'. Soft lighting, professional photography style or high quality 3D render. Minimalist. NO TEXT. NO WORDS."
     url_capa = gerar_imagem(prompt_capa, "capa")
@@ -449,7 +553,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; }}
             .container {{ background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px; }}
             .logo-header {{ text-align: center; margin-bottom: 20px; }}
-            .logo-header img {{ max-width: 200px; height: auto; }}
+            .logo-header img {{ max-width: 100%; height: auto; border-radius: 8px; }} /* Ajustado para banner full width */
             .header-intro {{ text-align: center; margin-bottom: 20px; font-size: 14px; color: #555; }}
             .header-img {{ width: 100%; border-radius: 8px 8px 0 0; display: block; }}
             .body-img {{ width: 100%; margin: 20px 0; border-radius: 8px; }}
@@ -465,7 +569,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         <div class="container">
             <div class="logo-header">
                 <a href="https://www.revalidatie.com.br" target="_blank">
-                    <img src="{logo_url}" alt="Revalidatie">
+                    <img src="{url_header}" alt="Reva +">
                 </a>
             </div>
             
@@ -478,6 +582,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             
             <div style="padding: 20px;">
                 {html_texto}
+
                 
                 <img src="{url_corpo}" class="body-img" alt="Ilustração">
                 
