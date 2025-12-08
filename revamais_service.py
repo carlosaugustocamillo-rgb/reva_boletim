@@ -264,16 +264,18 @@ def obter_proximo_tema_csv():
 
 def gerar_conteudo_instagram(tema, formato, referencias_text):
     """
-    Gera conteúdo para Instagram baseado no formato (Reel ou Carrossel).
-    Retorna lista de assets (URLs ou Texto).
+    Gera conteúdo para Instagram (Reel ou Carrossel).
+    Melhoria: Gera primeiro o TEXTO de cada slide com LLM, depois a IMAGEM.
     """
     print(f"📸 Gerando conteúdo para Instagram ({formato})...")
     assets = []
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     try:
+        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        
         if formato.lower() == "reel":
-            # Gera Roteiro
+            # (Mantido igual)
             prompt = f"""
             Crie um roteiro viral para Instagram Reels sobre: "{tema}".
             Baseado nestas referências: {referencias_text}
@@ -286,42 +288,76 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
             
             Formato: Markdown.
             """
-            model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
             roteiro = model.generate_content(prompt).text
             
-            # Salva MD e sobe pro Firebase
             filename = f"instagram_reel_{timestamp}.md"
-            with open(filename, "w", encoding="utf-8") as f:
-                f.write(roteiro)
-            
+            with open(filename, "w", encoding="utf-8") as f: f.write(roteiro)
             url = upload_file(filename, f"instagram/{filename}")
             if os.path.exists(filename): os.remove(filename)
-            
             assets.append({"type": "roteiro", "url": url, "name": "Roteiro do Reel"})
             
         elif formato.lower() == "carrossel":
-            # Gera 7 Imagens (Capa + Conteúdo Profundo + CTA)
-            slides_prompts = [
-                f"Slide 1 (Cover): Title '{tema}'. Clean, bold typography, medical background. Text in Portuguese.",
-                f"Slide 2: Introduction/Context about '{tema}'. Short text in Portuguese.",
-                f"Slide 3: Scientific Explanation (What science says). Educational diagram. Text in Portuguese.",
-                f"Slide 4: Deep Dive/Mechanism (Why it happens). Detailed infographic style. Text in Portuguese.",
-                f"Slide 5: Practical Tip #1 about '{tema}'. Iconography style. Text in Portuguese.",
-                f"Slide 6: Practical Tip #2 or Checklist. Clean list style. Text in Portuguese.",
-                f"Slide 7 (CTA): Conclusion & Text 'Gostou? Siga @revalidatie'. Text in Portuguese."
+            # 1. Planejamento do Conteúdo (Texto)
+            print("   📝 Planejando texto dos slides...")
+            prompt_slides = f"""
+            Planeje um Carrossel de Instagram (7 slides) sobre: "{tema}".
+            Público: Pacientes da Clínica Revalidatie (Fisioterapia/Saúde).
+            
+            Retorne APENAS um JSON (sem markdown code block) com esta estrutura:
+            [
+              {{"slide": 1, "titulo": "...", "texto_principal": "..."}},
+              {{"slide": 2, "titulo": "...", "texto_principal": "..."}},
+              ...
             ]
             
-            print(f"   🖼️ Gerando 7 slides para carrossel...")
-            for i, p_prompt in enumerate(slides_prompts):
-                full_prompt = f"Create an Instagram Carousel Slide (1080x1080). {p_prompt}. High quality, professional health clinic branding (Teal/Lavender colors)."
+            Regras de Conteúdo:
+            - Slide 1: Capa (Título curto e impactante).
+            - Slide 7: Conclusão/CTA (Siga @revalidatie_londrina).
+            - Use Português (PT-BR) perfeito.
+            - NÃO INVENTE nomes de outras clínicas. Use apenas "Clínica Revalidatie".
+            """
+            
+            try:
+                response_text = model.generate_content(prompt_slides).text
+                # Limpeza simples de JSON
+                response_text = response_text.replace("```json", "").replace("```", "").strip()
+                slides_data = json.loads(response_text)
+            except Exception as e:
+                print(f"   ⚠️ Erro ao gerar texto dos slides: {e}. Usando fallback genérico.")
+                slides_data = [{"slide": i+1, "titulo": f"Slide {i+1}", "texto_principal": tema} for i in range(7)]
+
+            # 2. Geração das Imagens (Slide a Slide)
+            print(f"   🖼️ Gerando 7 slides visualmente coerentes...")
+            for slide in slides_data:
+                slide_num = slide.get('slide')
+                titulo = slide.get('titulo')
+                texto = slide.get('texto_principal')
                 
-                # Tenta gerar com Gemini 3 (reusa função existente mas adaptada ou chama direto)
-                # Vamos chamar gerar_imagem mas precisamos garantir que use o Gemini 3 para texto
-                # A função gerar_imagem já usa 'gemini-3-pro-image-preview'.
+                # Prompt de Imagem Otimizado
+                # DALL-E/Gemini muitas vezes erram texto. 
+                # Estratégia: Pedir imagem muito limpa, estilo infográfico minimalista.
+                # Se for texto curto (Título), pedimos pra tentar escrever. Se for longo, pedimos representação visual.
                 
-                slider_name = f"slide_{i+1}_{timestamp}"
+                full_prompt = (
+                    f"Design an Instagram Carousel Slide (1080x1080) for health clinic 'Revalidatie'. "
+                    f"Theme colors: Teal (#205776) and White. Clean, professional, medical aesthetic. "
+                    f"Slide Context: {titulo}. "
+                )
+                
+                if len(texto) < 50:
+                    full_prompt += f"Include the text in PORTUGUESE: '{texto}'. Typography: Modern Sans-Serif, bold, legible."
+                else:
+                    full_prompt += "Create a visual representation (icon/diagram) of the concept. Do NOT try to write the full paragraph. Keep it visual and minimal."
+
+                slider_name = f"slide_{slide_num}_{timestamp}"
                 url = gerar_imagem(full_prompt, slider_name)
-                assets.append({"type": "image", "url": url, "name": f"Slide {i+1}"})
+                
+                assets.append({
+                    "type": "image", 
+                    "url": url, 
+                    "name": f"Slide {slide_num}: {titulo}",
+                    "texto_base": texto # Guarda o texto para referência do usuário se a imagem falhar
+                })
                 
     except Exception as e:
         print(f"❌ Erro ao gerar conteúdo Instagram: {e}")
@@ -484,8 +520,36 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             }
         })
         mc.campaigns.set_content(campaign["id"], {"html": html_email})
-        log(f"✅ Campanha criada com sucesso: {campaign['id']}")
+        log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
         
+        # 7. Agendamento Automático (Terça-feira 12:00 BRT)
+        try:
+            log("📅 Tentando agendar envio para próxima Terça-feira (12:00 BRT)...")
+            
+            # Cálculo da próxima terça
+            now_utc = datetime.utcnow()
+            days_until_tuesday = (1 - now_utc.weekday()) % 7
+            
+            # Se hoje for terça e já passou das 15:00 UTC (12:00 BRT), agendar para a próxima
+            # Se for antes, agenda pra hoje mesmo? Vamos assumir sempre D+7 se já passou.
+            if days_until_tuesday == 0 and now_utc.hour >= 15:
+                days_until_tuesday = 7
+                
+            next_tuesday = now_utc + timedelta(days=days_until_tuesday)
+            # Define 15:00 UTC (12:00 BRT)
+            schedule_time = next_tuesday.replace(hour=15, minute=0, second=0, microsecond=0)
+            
+            # Formato ISO 8601 UTC
+            schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            
+            mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
+            log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC)")
+            
+        except Exception as e:
+            # Muitos planos gratuitos não permitem agendamento via API
+            log(f"⚠️ Não foi possível agendar automatiamente: {e}")
+            log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende ou envie manualmente pelo painel do Mailchimp.")
+
         return {
             "status": "success", 
             "campaign_id": campaign['id'], 
