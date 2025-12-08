@@ -9,3 +9,4 @@ uvicorn
 firebase-admin
 podgen
 google-generativeai
+Pillow
