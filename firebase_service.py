@@ -1,6 +1,6 @@
 import os
 import firebase_admin
-from firebase_admin import credentials, storage
+from firebase_admin import credentials, storage, firestore
 from podgen import Podcast, Episode, Media, Person, Category
 from datetime import datetime, timedelta
 import pytz
@@ -34,6 +34,21 @@ def is_firebase_ready():
     """Verifica se o Firebase foi inicializado corretamente."""
     return bool(firebase_admin._apps)
 
+def save_firestore_document(collection, doc_id, data):
+    """Salva um documento no Firestore."""
+    if not firebase_admin._apps:
+        print("❌ Firebase não inicializado.")
+        return False
+        
+    try:
+        db = firestore.client()
+        doc_ref = db.collection(collection).document(doc_id)
+        doc_ref.set(data)
+        print(f"✅ Documento salvo no Firestore: {collection}/{doc_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao salvar no Firestore: {e}")
+        return False
 
 def upload_file(local_path, destination_blob_name):
     """Faz upload de um arquivo para o Firebase Storage e retorna a URL pública."""

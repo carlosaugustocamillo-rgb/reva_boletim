@@ -947,6 +947,17 @@ def rodar_boletim(opcoes=None):
                 with open(roteiro_json_path, "w", encoding="utf-8") as f:
                     json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
                 print(f"✅ Roteiro JSON salvo em: {roteiro_json_path}")
+                
+                # Upload para Firestore se habilitado
+                if opcoes.get('firebase'):
+                    from firebase_service import save_firestore_document
+                    doc_data = {
+                        "date": hoje,
+                        "script": roteiros_audio,
+                        "created_at": datetime.now().isoformat()
+                    }
+                    save_firestore_document("roteiros", f"roteiro_{hoje}", doc_data)
+                    
             except Exception as e:
                 print(f"❌ Erro ao salvar JSON do roteiro: {e}")
         else:
@@ -1022,6 +1033,15 @@ def rodar_boletim(opcoes=None):
                         pass
 
                         estudo_audios.append(caminho_temp)
+                        
+                        # Upload individual para Firebase Storage (se habilitado)
+                        if opcoes.get('firebase'):
+                            try:
+                                from firebase_service import upload_file
+                                dest_blob = f"audios_raw/{hoje}/temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3"
+                                upload_file(caminho_temp, dest_blob)
+                            except Exception as e_upload:
+                                print(f"⚠️ Erro upload audio temp: {e_upload}")
                     
                     if estudo_audios:
                         estudo_combinado = AudioSegment.empty()
