@@ -329,47 +329,74 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
         
     return assets
 
-def criar_campanha_revamais(tema=None):
+def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
+    """
+    Cria campanha Reva+ com suporte a logs e cancelamento.
+    log_callback: função(str) para enviar logs.
+    check_cancel: função() -> bool que retorna True se deve cancelar.
+    """
+    def log(msg):
+        print(msg) # Mantém print no stdout
+        if log_callback: log_callback(msg)
+        
+    def check():
+        if check_cancel and check_cancel():
+            raise Exception("CANCELADO_PELO_USUARIO")
+
     formato_instagram = "Carrossel" # Default
 
+    check()
     # Se não veio tema, tenta pegar do CSV
     if not tema or tema == "auto":
-        print("🤖 Modo Automático: Buscando tema no calendário editorial...")
+        log("🤖 Modo Automático: Buscando tema no calendário editorial...")
         dados_csv = obter_proximo_tema_csv()
         if not dados_csv:
             return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
         tema = dados_csv['tema']
         formato_instagram = dados_csv.get('formato', 'Carrossel')
             
-    print(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
+    log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
+    check()
     # 1. Traduzir tema para busca
     try:
+        log("🌍 Traduzindo tema para busca científica...")
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
         tema_ingles = model.generate_content(f"Translate to English for medical search: {tema}").text.strip()
     except:
         tema_ingles = tema
 
+    check()
     # 2. Buscar Referências
+    log(f"🔎 Buscando referências para: {tema_ingles}...")
     referencias = buscar_referencias_pubmed(tema_ingles)
     
+    check()
     # 3. Gerar Imagens
+    log("🎨 Gerando assets visuais (isso pode demorar)...")
+    
     # Capa: SEM TEXTO, apenas visual
     prompt_capa = f"A welcoming, modern health illustration about '{tema_ingles}'. Soft lighting, professional photography style or high quality 3D render. Minimalist. NO TEXT. NO WORDS."
     url_capa = gerar_imagem(prompt_capa, "capa")
+    check()
     
     # Imagem Corpo: Se tiver texto, DEVE SER EM PORTUGUÊS
     prompt_corpo = f"An educational infographic or diagram about '{tema_ingles}'. Clean lines, easy to understand, white background. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). If you cannot generate correct Portuguese text, do not include any text."
     url_corpo = gerar_imagem(prompt_corpo, "corpo")
     
+    check()
     # 4. Gerar Texto
+    log("✍️ Escrevendo boletim e formatando HTML...")
     html_texto = gerar_conteudo_revamais(tema, referencias)
 
+    check()
     # 4.5 Gerar Conteúdo Instagram (Extra)
+    log("📸 Criando conteúdo para Instagram...")
     # Extrai texto das referências para passar de contexto
     refs_text_context = "\n".join([r['texto'] for r in referencias])
     instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context)
     
+    check()
     # 5. Montar HTML Final
     # Logo da Revalidatie (usado no boletim_service.py)
     # Se o usuário definir uma no .env, usa. Senão, usa a padrão.
@@ -424,9 +451,10 @@ def criar_campanha_revamais(tema=None):
     </html>
     """
     
+    check()
     # 6. Mailchimp
     try:
-        print("📧 Criando rascunho no Mailchimp...")
+        log("📧 Enviando rascunho para o Mailchimp...")
         campaign = mc.campaigns.create({
             "type": "regular",
             "recipients": {"list_id": MC_LIST_ID},
@@ -438,7 +466,8 @@ def criar_campanha_revamais(tema=None):
             }
         })
         mc.campaigns.set_content(campaign["id"], {"html": html_email})
-        print(f"✅ Campanha criada: {campaign['id']}")
+        log(f"✅ Campanha criada com sucesso: {campaign['id']}")
+        
         return {
             "status": "success", 
             "campaign_id": campaign['id'], 
@@ -449,9 +478,10 @@ def criar_campanha_revamais(tema=None):
             "instagram_format": formato_instagram
         }
     except Exception as e:
-        print(f"❌ Erro Mailchimp: {e}")
+        log(f"❌ Erro Mailchimp: {e}")
         return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     # Teste rápido
-    criar_campanha_revamais("A importância do sono na recuperação muscular")
+    def print_log(msg): print(f"[LOG] {msg}")
+    criar_campanha_revamais("A importância do sono na recuperação muscular", log_callback=print_log)
