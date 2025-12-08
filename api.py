@@ -28,6 +28,8 @@ app.add_middleware(
         "https://revalidatie.com.br",
         "https://www.revalidatie.com.br",
         "https://reva-boletim-production.up.railway.app",
+        "https://stackblitz.com",
+        "https://cors-proxy-production.stackblitz.workers.dev",
     ],
     # allow_origin_regex removed to avoid conflicts since manual middleware handles it
     allow_credentials=True,
@@ -39,8 +41,25 @@ app.add_middleware(
 async def cors_override_middleware(request: Request, call_next):
     origin = request.headers.get("origin")
     
-    # Se for requisição OPTIONS vinda do WebContainer, responde direto (bypass total)
-    if request.method == "OPTIONS" and origin and "webcontainer-api.io" in origin:
+    # Lista de domínios permitidos dinamicamente
+    allowed_domains = ["webcontainer-api.io", "stackblitz.com", "stackblitz.io", "stackblitz.workers.dev"]
+    
+    # Verifica se a origem bate com algum dos domínios permitidos
+    is_allowed = False
+    if origin:
+        for domain in allowed_domains:
+            if domain in origin:
+                is_allowed = True
+                break
+    else:
+        # Se não tem origin (server-to-server ou local), as vezes é bom liberar ou tratar como seguro dependendo do caso.
+        # Mas para browser, geralmente tem origin. Se for null (redirects), liberamos.
+        if origin is None or origin == "null":
+             is_allowed = True
+             origin = "*" # Fallback
+
+    # Se for requisição OPTIONS vinda de origem permitida, responde direto
+    if request.method == "OPTIONS" and is_allowed:
         response = Response(status_code=200)
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
@@ -51,7 +70,7 @@ async def cors_override_middleware(request: Request, call_next):
     response = await call_next(request)
     
     # Adiciona headers nas rotas normais também
-    if origin and "webcontainer-api.io" in origin:
+    if is_allowed:
         response.headers["Access-Control-Allow-Origin"] = origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Allow-Methods"] = "*"
