@@ -238,7 +238,7 @@ def obter_proximo_tema_csv():
     # Procura o primeiro não usado
     idx_escolhido = -1
     for i, row in enumerate(rows):
-        is_used = row.get('Used', '').strip()
+        is_used = (row.get('Used') or '').strip()
         if not is_used:
             tema_escolhido = row.get('Title', row.get('Theme', 'Tema Genérico'))
             formato_escolhido = row.get('Format', 'Carrossel')
