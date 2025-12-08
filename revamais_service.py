@@ -400,7 +400,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     # 5. Montar HTML Final
     # Logo da Revalidatie (usado no boletim_service.py)
     # Se o usuário definir uma no .env, usa. Senão, usa a padrão.
-    DEFAULT_LOGO = "https://i.imgur.com/5ocjGbI.png"
+    DEFAULT_LOGO = "https://i.imgur.com/in5MW0g.png"
     logo_url = os.environ.get("REVA_LOGO_URL", DEFAULT_LOGO)
     
     html_email = f"""
