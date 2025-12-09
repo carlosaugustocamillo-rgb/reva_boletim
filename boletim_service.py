@@ -314,9 +314,15 @@ REGRAS OBRIGATÓRIAS:
 - Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos.
 - O HOST apresenta o estudo, o COHOST faz perguntas e comenta.
 - Mantenha informal mas profissional.
-- AUMENTE A PROFUNDIDADE: Gere de 8 a 12 falas no total. Explore bem os Métodos e Resultados específicos.
-- Cada fala deve ter 1-4 frases. Podem ser um pouco mais longas para explicar conceitos complexos.
+- AUMENTE A PROFUNDIDADE (CRÍTICO): O diálogo DEVE ter entre 10 a 16 trocas de fala.
+- NÃO SEJA SUPERFICIAL. O ouvinte quer detalhes técnicos.
+- OBRIGATÓRIO discutir:
+  1. METODOLOGIA: Qual o n? Qual o desenho? Quanto tempo? Qual a intervenção exata?
+  2. RESULTADOS: Quais os números? P-valor? Intervalo de confiança? Quem melhorou mais?
+  3. APLICAÇÃO CLÍNICA: O que isso muda na prática?
+- Cada fala deve ser substancial (2 a 4 frases). Evite falas curtas como "Concordo" ou "Legal". Se concordar, complemente com uma informação.
 - Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1).
+- O arquivo final de áudio DEVE ter pelo menos 2 minutos POR ESTUDO. Escreva bastante texto!
 
 Contexto do estudo:
 Título: {titulo}
@@ -326,7 +332,7 @@ Resumo traduzido:
 {resumo_pt}
 
 FORMATO DE RETORNO (JSON array):
-Retorne APENAS um array JSON válido, sem texto adicional e sem ```json```.
+Retorne APENAS um array JSON válido.
 """
 
     resposta = client.chat.completions.create(
@@ -1092,6 +1098,10 @@ def rodar_boletim(opcoes=None):
                         total_chars_elevenlabs += len(text)
                         
                         speaker_clean = fala.get('speaker', 'HOST').strip().upper()
+                        
+                        # DEBUG: Ver quem está falando
+                        print(f"   [FALA {fala_idx+1}] Speaker JSON: '{fala.get('speaker')}' -> Clean: '{speaker_clean}'")
+                        
                         voice_id = ELEVEN_VOICE_ID_HOST if speaker_clean == 'HOST' else ELEVEN_VOICE_ID_COHOST
                         
                         # Configurações ajustadas para fala mais rápida/dinâmica
