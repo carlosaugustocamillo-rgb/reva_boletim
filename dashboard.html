@@ -319,6 +319,30 @@
             }
         }
 
+        async function forceDownload(url, filename) {
+            try {
+                // Tenta forçar o download fazendo fetch e criando blob
+                // Isso contorna o problema de abrir em nova aba para arquivos cross-origin
+                const res = await fetch(url);
+                const blob = await res.blob();
+                const blobUrl = window.URL.createObjectURL(blob);
+
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = blobUrl;
+                a.download = filename; // Nome sugerido para salvar
+                document.body.appendChild(a);
+                a.click();
+
+                window.URL.revokeObjectURL(blobUrl);
+                document.body.removeChild(a);
+            } catch (e) {
+                console.error("Erro no download forçado:", e);
+                // Fallback: abre em nova aba se falhar o fetch (ex: CORS erro)
+                window.open(url, '_blank');
+            }
+        }
+
         async function listarEpisodios() {
             const div = document.getElementById('listaEpisodios');
             div.innerHTML = "Carregando...";
@@ -339,13 +363,16 @@
 
                 let html = '<ul style="list-style: none; padding: 0;">';
                 lista.forEach(ep => {
+                    const safeName = ep.nome || 'episodio.mp3';
                     html += `
                         <li style="margin-bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
                             <div>
                                 <strong>${ep.nome}</strong><br>
                                 <small style="color: #666;">${new Date(ep.data).toLocaleString()} - ${ep.tamanho}</small>
                             </div>
-                            <a href="${ep.url}" target="_blank" style="background: #28a745; color: white; text-decoration: none; padding: 5px 10px; border-radius: 4px; font-size: 0.9em;">⬇️ Baixar</a>
+                            <button onclick="forceDownload('${ep.url}', '${safeName}')" style="background: #28a745; color: white; border:none; cursor:pointer; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; font-weight:bold;">
+                                ⬇️ Baixar
+                            </button>
                         </li>
                     `;
                 });
@@ -411,11 +438,12 @@
                             statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado!';
 
                             if (data.result && data.result.audio_url) {
+                                const downloadUrl = data.result.audio_url;
                                 const downloadBtn = `
                                     <div style="margin-top: 15px; text-align: center;">
-                                        <a href="${data.result.audio_url}" target="_blank" style="background-color: #4CAF50; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+                                        <button onclick="forceDownload('${downloadUrl}', 'episodio_novo.mp3')" style="background-color: #4CAF50; color: white; padding: 10px 20px; border:none; cursor:pointer; border-radius: 5px; font-weight: bold; font-size: 16px;">
                                             ⬇️ Baixar MP3 do Episódio
-                                        </a>
+                                        </button>
                                     </div>
                                 `;
                                 logDiv.innerHTML += downloadBtn;
