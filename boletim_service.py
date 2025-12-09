@@ -55,6 +55,7 @@ if GEMINI_API_KEY:
 # Diretório base: sempre uma pasta "data" dentro do próprio projeto
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.join(PROJECT_ROOT, "data")
+DATA_DIR = BASE_DIR # Alias para compatibilidade
 os.makedirs(BASE_DIR, exist_ok=True)
 
 # Subpasta para áudios temporários
