@@ -351,6 +351,42 @@ async def get_ultimo_roteiro():
         
     return {"arquivo": arquivos[0], "conteudo": conteudo}
 
+@app.get("/testar-firebase")
+async def start_firebase_test():
+    """Rota para diagnosticar conexão com Firebase (Storage e Firestore)."""
+    results = {"storage": "pending", "firestore": "pending", "logs": []}
+    
+    # 1. Teste Firestore
+    try:
+        from firebase_service import save_firestore_document
+        test_data = {"teste": True, "data": datetime.now().isoformat(), "msg": "Verificação de escrita"}
+        sucesso = save_firestore_document("debug_testes", "teste_conexao", test_data)
+        if sucesso:
+            results["firestore"] = "✅ SUCESSO! Coleção 'debug_testes' criada."
+        else:
+            results["firestore"] = "❌ FALHA. Verifique logs do servidor."
+    except Exception as e:
+        results["firestore"] = f"❌ ERRO EXCEÇÃO: {str(e)}"
+
+    # 2. Teste Storage
+    try:
+        from firebase_service import upload_file
+        # Cria arquivo temp
+        temp_file = "teste_storage.txt"
+        with open(temp_file, "w") as f: f.write("Teste de upload do RevaCast.")
+        
+        url = upload_file(temp_file, "test-uploads/teste_conexao.txt")
+        if url:
+             results["storage"] = f"✅ SUCESSO! Arquivo salvo em test-uploads/. URL: {url}"
+        else:
+             results["storage"] = "❌ FALHA no Upload (URL vazia)."
+        
+        if os.path.exists(temp_file): os.remove(temp_file)
+    except Exception as e:
+        results["storage"] = f"❌ ERRO EXCEÇÃO: {str(e)}"
+        
+    return results
+
 @app.post("/criar-revamais")
 def criar_revamais_endpoint(input_data: CampanhaInput):
     """

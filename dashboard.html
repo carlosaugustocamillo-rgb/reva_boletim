@@ -619,10 +619,28 @@
                     w.document.write("<pre>" + JSON.stringify(data.conteudo, null, 2) + "</pre>");
                 }
             } catch (e) {
-                alert("Erro ao buscar roteiro.");
+                alert("Erro ao buscar roteiro. " + e);
+            }
+        }
+
+        async function testarFirebase() {
+            const btn = document.getElementById('btnTestFire');
+            btn.disabled = true;
+            btn.innerHTML = "⏳ Testando...";
+
+            try {
+                const res = await fetch('/testar-firebase');
+                const data = await res.json();
+                alert(`🔥 Resultado Teste Firebase:\n\nSTORAGE: ${data.storage}\nFIRESTORE: ${data.firestore}`);
+            } catch (e) {
+                alert("Erro no teste: " + e);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = "🔥 Testar Firebase";
             }
         }
     </script>
 </body>
 
 </html>
+```
