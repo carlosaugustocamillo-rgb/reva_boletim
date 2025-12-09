@@ -999,9 +999,77 @@ def rodar_boletim(opcoes=None):
         if os.path.exists(episodio_path):
              yield f"⚠️ Áudio já encontrado! (Isso não deve acontecer com versionamento)"
              
-        if roteiros_audio:
+        elif roteiros_audio:
             yield "🎙️ Gerando Áudio (ElevenLabs)..."
             audio_paths = []
+            
+            # --- GERAÇÃO DA ABERTURA FALADA (IVO E MANU) ---
+            import random
+            yield "   - Gerando apresentação dos hosts..."
+            
+            POOL_ABERTURAS = [
+                # Opção 1 (Sugerida)
+                [
+                    {"speaker": "HOST", "text": "Olááá! Sejam muito bem-vindos a mais um episódio do RevaCast Weekly. Eu sou o Ivo..."},
+                    {"speaker": "COHOST", "text": "E eu sou a Manu."},
+                    {"speaker": "HOST", "text": "Juntos a gente dá uma passeada na literatura científica da última semana. Bora lá, Manu?"},
+                    {"speaker": "COHOST", "text": "Bora!"}
+                ],
+                # Opção 2 (Mais direta)
+                [
+                    {"speaker": "HOST", "text": "Fala pessoal! Começando mais uma edição do RevaCast Weekly, o seu resumo de ciência. Aqui é o Ivo."},
+                    {"speaker": "COHOST", "text": "E aqui é a Manu. Tudo pronto para as atualizações desta semana."},
+                    {"speaker": "HOST", "text": "Exato. Separamos os artigos mais importantes para discutir. Vamos nessa?"},
+                    {"speaker": "COHOST", "text": "Com certeza, vamos lá!"}
+                ],
+                # Opção 3 (Mais energética)
+                [
+                    {"speaker": "HOST", "text": "Sejam bem-vindos ao RevaCast Weekly! Eu sou o Ivo e já estou com os estudos na mão."},
+                    {"speaker": "COHOST", "text": "Oi gente, eu sou a Manu! Vamos descomplicar as evidências da semana?"},
+                    {"speaker": "HOST", "text": "É isso aí. Sem enrolação, vamos ver o que saiu de novo."},
+                    {"speaker": "COHOST", "text": "Partiu!"}
+                ]
+            ]
+            
+            abertura_escolhida = random.choice(POOL_ABERTURAS)
+            audios_abertura_temp = []
+            
+            try:
+                for idx_intro, fala in enumerate(abertura_escolhida):
+                    voice_id = ELEVEN_VOICE_ID_HOST if fala['speaker'] == 'HOST' else ELEVEN_VOICE_ID_COHOST
+                    audio_gen = elevenlabs_client.text_to_speech.convert(
+                        voice_id=voice_id,
+                        text=fala['text'],
+                        model_id="eleven_multilingual_v2", # Usar v2 para intro (geralmente mais estável curto) ou v2.5
+                        voice_settings=VoiceSettings(stability=0.75, similarity_boost=0.75, style=0.0, use_speaker_boost=True)
+                    )
+                    path_intro = os.path.join(AUDIO_DIR, f"temp_intro_{idx_intro}.mp3")
+                    with open(path_intro, "wb") as f:
+                        for chunk in audio_gen: f.write(chunk)
+                    audios_abertura_temp.append(path_intro)
+                
+                # Combina a abertura
+                abertura_combinada = AudioSegment.empty()
+                for p in audios_abertura_temp:
+                    abertura_combinada += AudioSegment.from_file(p) + AudioSegment.silent(duration=300)
+                
+                path_abertura_final = os.path.join(AUDIO_DIR, f"intro_falada_{hoje}.mp3")
+                abertura_combinada.export(path_abertura_final, format="mp3")
+                
+                # Adiciona o caminho da abertura NA LISTA DE CAMINHOS para ser mixado depois
+                # Mas precisamos diferenciar, pois a lógica abaixo espera arquivos 'estudoX_completo'.
+                # Vamos inserir no início da lista final de audio_paths depois? Não, audio_paths é construído no loop.
+                # Vamos adicionar no início de audio_paths e garantir que o loop abaixo faça append.
+                audio_paths.append(path_abertura_final)
+                
+                # Cleanup temp intro files
+                # for p in audios_abertura_temp: os.remove(p)
+                
+            except Exception as e:
+                print(f"Erro ao gerar abertura: {e}")
+
+            # --- FIM DA ABERTURA ---
+            
             
             for estudo_idx, dialogo in enumerate(roteiros_audio):
                 if not isinstance(dialogo, list): continue
