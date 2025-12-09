@@ -95,6 +95,63 @@
             margin: 0 auto 10px auto;
         }
 
+        .debug-tools {
+            margin-top: 20px;
+            background: #eef5fb;
+            border: 1px dashed #205776;
+            border-radius: 8px;
+            padding: 15px;
+            text-align: left;
+        }
+
+        .debug-tools h3 {
+            margin-top: 0;
+            color: #205776;
+            font-size: 1.1rem;
+        }
+
+        .debug-tools button {
+            width: auto;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            padding: 10px 16px;
+            font-size: 0.95rem;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.6);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 999;
+        }
+
+        .modal-content {
+            background: #fff;
+            padding: 20px;
+            border-radius: 10px;
+            max-width: 600px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .modal-content h4 {
+            margin-top: 0;
+            color: #205776;
+        }
+
+        .modal-content pre {
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 0.85rem;
+        }
+
         @keyframes spin {
             0% {
                 transform: rotate(0deg);
@@ -163,8 +220,18 @@
             style="text-align: left; margin-top: 20px; font-family: monospace; font-size: 14px; color: #333; background: #f9f9f9; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; display: none;">
         </div>
 
-        <button onclick="verRoteiro()" style="margin-top: 10px; background-color: #6c757d; font-size: 0.8em;">📄 Ver
-            Último Roteiro (Debug)</button>
+        <div class="debug-tools">
+            <h3>🛠️ Ferramentas de Debug</h3>
+            <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;">
+                <button id="btnUltimoRoteiro" onclick="verUltimoRoteiro()" style="background-color: #007bff;">
+                    📄 Ver Último Roteiro (Debug)
+                </button>
+                <button id="btnTestFirebase" onclick="testarFirebase()" style="background-color: #ff5722;">
+                    🔥 Testar Conexão Firebase
+                </button>
+                <span id="firebaseDebugStatus" style="color: #205776;"></span>
+            </div>
+        </div>
 
         <hr style="margin: 40px 0; border: 0; border-top: 1px solid #eee;">
 
@@ -203,6 +270,14 @@
         <div id="statusReva" style="margin-top: 20px; padding: 10px; border-radius: 4px; display: none;"></div>
     </div>
 
+    <div id="debugModal" class="modal-overlay" onclick="hideDebugModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h4 id="debugModalTitle">Debug</h4>
+            <pre id="debugModalContent"></pre>
+            <button onclick="hideDebugModal()" style="margin-top: 10px; background-color: #205776;">Fechar</button>
+        </div>
+    </div>
+
     <script>
         let currentTaskId = null;
         let pollInterval = null;
@@ -229,6 +304,21 @@
                 startPolling(savedTaskId);
             }
         };
+
+        function showDebugModal(title, content) {
+            const overlay = document.getElementById('debugModal');
+            const titleEl = document.getElementById('debugModalTitle');
+            const contentEl = document.getElementById('debugModalContent');
+
+            if (titleEl) titleEl.textContent = title;
+            if (contentEl) contentEl.textContent = content;
+            if (overlay) overlay.style.display = 'flex';
+        }
+
+        function hideDebugModal() {
+            const overlay = document.getElementById('debugModal');
+            if (overlay) overlay.style.display = 'none';
+        }
 
         async function rodarBoletim() {
             const btn = document.getElementById('btnRodar');
@@ -606,41 +696,84 @@
                 btn.innerHTML = '📸 Criar Reva +';
             }
         }
-        async function verRoteiro() {
-            try {
-                const res = await fetch('/ultimo-roteiro');
-                const data = await res.json();
+        async function verUltimoRoteiro() {
+            const btn = document.getElementById('btnUltimoRoteiro');
+            if (!btn) return;
 
-                if (data.error) {
-                    alert(data.error);
-                } else {
-                    // Abre em nova janela formatado
-                    const w = window.open("", "_blank");
-                    w.document.write("<pre>" + JSON.stringify(data.conteudo, null, 2) + "</pre>");
+            const originalLabel = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Buscando...';
+
+            try {
+                const response = await fetch('/ultimo-roteiro');
+                if (!response.ok) {
+                    throw new Error(`Erro ${response.status}`);
                 }
-            } catch (e) {
-                alert("Erro ao buscar roteiro. " + e);
+
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                const conteudo = data.conteudo ?? data.data ?? data;
+                const formatted = JSON.stringify(conteudo, null, 2);
+                showDebugModal('Último Roteiro (Debug)', formatted);
+            } catch (error) {
+                console.error('Erro ao buscar roteiro:', error);
+                alert('Erro ao buscar roteiro: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalLabel;
             }
         }
 
         async function testarFirebase() {
-            const btn = document.getElementById('btnTestFire');
+            const btn = document.getElementById('btnTestFirebase');
+            const statusSpan = document.getElementById('firebaseDebugStatus');
+            if (!btn) return;
+
+            const originalLabel = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = "⏳ Testando...";
+            btn.innerHTML = '⏳ Testando...';
+            if (statusSpan) {
+                statusSpan.textContent = 'Carregando...';
+                statusSpan.style.color = '#205776';
+            }
 
             try {
-                const res = await fetch('/testar-firebase');
-                const data = await res.json();
-                alert(`🔥 Resultado Teste Firebase:\n\nSTORAGE: ${data.storage}\nFIRESTORE: ${data.firestore}`);
-            } catch (e) {
-                alert("Erro no teste: " + e);
+                const response = await fetch('/testar-firebase');
+                if (!response.ok) {
+                    throw new Error(`Erro ${response.status}`);
+                }
+
+                const data = await response.json();
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                const storageInfo = data.storage ?? 'Sem dados';
+                const firestoreInfo = data.firestore ?? 'Sem dados';
+                const message = `Storage: ${storageInfo}\nFirestore: ${firestoreInfo}`;
+
+                showDebugModal('Teste de Conexão Firebase', message);
+
+                if (statusSpan) {
+                    statusSpan.textContent = `✅ Storage: ${storageInfo} | Firestore: ${firestoreInfo}`;
+                    statusSpan.style.color = '#155724';
+                }
+            } catch (error) {
+                console.error('Erro no teste do Firebase:', error);
+                if (statusSpan) {
+                    statusSpan.textContent = '❌ Erro ao testar Firebase';
+                    statusSpan.style.color = '#721c24';
+                }
+                alert('Erro ao testar Firebase: ' + error.message);
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = "🔥 Testar Firebase";
+                btn.innerHTML = originalLabel;
             }
         }
     </script>
 </body>
 
 </html>
-```
