@@ -272,16 +272,31 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False)
     Gera um roteiro de podcast em formato de CONVERSA entre dois apresentadores,
     com base no RESUMO TRADUZIDO. Retorna uma lista de dicionários com speaker e text.
     """
+    import random
+    
+    # Frases de transição variadas para evitar repetição
+    frases_transicao = [
+        "Bom, vamos em frente... nesse próximo estudo...",
+        "Seguindo nossa pauta de hoje...",
+        "Mudando um pouco de assunto, mas ainda dentro da nossa área...",
+        "O próximo artigo traz um ponto interessante sobre...",
+        "Agora, olha só que curioso esse próximo estudo...",
+        "Avançando aqui, temos um trabalho sobre..."
+    ]
     
     # Define se é o primeiro estudo ou não para ajustar a transição
     if idx == 0:
         contexto_inicial = "Este é o PRIMEIRO estudo do episódio. O HOST DEVE começar com uma frase de ânimo tipo 'Vamos lá então, pessoal! O nosso 1o estudo de hoje fala sobre...' ou similar."
     else:
-        contexto_inicial = f"Este é o estudo número {idx + 1}. O HOST DEVE começar com uma transição natural tipo 'Bom, vamos em frente... nesse próximo estudo...' ou 'Seguindo nossa pauta...'."
+        # Escolhe uma frase aleatória (baseada no índice para garantir variação se for re-executado, ou random mesmo)
+        frase_escolhida = frases_transicao[idx % len(frases_transicao)] # Usa módulo para ciclar se acabarem as frases
+        contexto_inicial = f"Este é o estudo número {idx + 1}. O HOST DEVE começar com uma transição natural. Sugestão: '{frase_escolhida}' (ou similar, mas varie o vocabulário)."
     
     # Define se deve ter despedida no final
     if is_last:
-        contexto_final = "Este é o ÚLTIMO estudo do episódio. Após discutir o estudo, FINALIZE o podcast com uma despedida calorosa. Agradeça os ouvintes e diga 'até a próxima!'"
+        contexto_final = """Este é o ÚLTIMO estudo. Após discutir o estudo, ENCERRE o episódio SCRIPTADO EXATAMENTE ASSIM (pode adaptar levemente, mas mantenha a essência):
+        HOST: "E com isso a gente encerra mais um episódio do RevaCast Weekly. Obrigado pela audiência, e a gente se vê no próximo episódio! Até lá!"
+        COHOST: "Até mais pessoal, até a próxima!" """
     else:
         contexto_final = "NÃO finalize o podcast. Deixe a conversa aberta para o próximo estudo."
     
@@ -299,8 +314,8 @@ REGRAS OBRIGATÓRIAS:
 - Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos.
 - O HOST apresenta o estudo, o COHOST faz perguntas e comenta.
 - Mantenha informal mas profissional.
-- De 5 a 8 falas no total (alternando entre HOST e COHOST).
-- Cada fala deve ter 1-3 frases curtas e diretas.
+- AUMENTE A PROFUNDIDADE: Gere de 8 a 12 falas no total. Explore bem os Métodos e Resultados específicos.
+- Cada fala deve ter 1-4 frases. Podem ser um pouco mais longas para explicar conceitos complexos.
 - Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1).
 
 Contexto do estudo:
@@ -311,13 +326,7 @@ Resumo traduzido:
 {resumo_pt}
 
 FORMATO DE RETORNO (JSON array):
-Retorne APENAS um array JSON válido, sem texto adicional e sem ```json```. Exemplo:
-[
-  {{"speaker": "HOST", "text": "Vamos lá então, pessoal! O primeiro estudo..."}},
-  {{"speaker": "COHOST", "text": "Legal! O que eles investigaram?"}},
-  {{"speaker": "HOST", "text": "Eles analisaram..."}},
-  {{"speaker": "COHOST", "text": "E quais foram os resultados?"}}
-]
+Retorne APENAS um array JSON válido, sem texto adicional e sem ```json```.
 """
 
     resposta = client.chat.completions.create(
