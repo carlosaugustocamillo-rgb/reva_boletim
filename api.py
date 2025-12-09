@@ -19,65 +19,14 @@ class CampanhaInput(BaseModel):
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
 
-# Configuração de CORS PRIMEIRO (será "envelopada" pelo middleware manual abaixo)
+# Configuração de CORS Permissiva (Resolve problemas com WebContainers e Ambientes de Dev)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:8000",
-        "https://revalidatie.com.br",
-        "https://www.revalidatie.com.br",
-        "https://reva-boletim-production.up.railway.app",
-        "https://stackblitz.com",
-        "https://cors-proxy-production.stackblitz.workers.dev",
-    ],
-    # allow_origin_regex removed to avoid conflicts since manual middleware handles it
+    allow_origins=["*"],  # Permite qualquer origem
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
- 
-@app.middleware("http")
-async def cors_override_middleware(request: Request, call_next):
-    origin = request.headers.get("origin")
-    
-    # Lista de domínios permitidos dinamicamente
-    allowed_domains = ["webcontainer-api.io", "stackblitz.com", "stackblitz.io", "stackblitz.workers.dev", "localhost"]
-    
-    # Verifica se a origem bate com algum dos domínios permitidos
-    is_allowed = False
-    if origin:
-        for domain in allowed_domains:
-            if domain in origin:
-                is_allowed = True
-                break
-    else:
-        # Se não tem origin (server-to-server ou local), as vezes é bom liberar ou tratar como seguro dependendo do caso.
-        # Mas para browser, geralmente tem origin. Se for null (redirects), liberamos.
-        if origin is None or origin == "null":
-             is_allowed = True
-             origin = "*" # Fallback
-
-    # Se for requisição OPTIONS vinda de origem permitida, responde direto
-    if request.method == "OPTIONS" and is_allowed:
-        response = Response(status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        return response
-
-    response = await call_next(request)
-    
-    # Adiciona headers nas rotas normais também
-    if is_allowed:
-        response.headers["Access-Control-Allow-Origin"] = origin
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        
-    return response
-
 @app.get("/ping")
 def ping():
     return {"status": "ok", "version": "with_cors_fix_v2", "cors": "enabled"}
@@ -86,13 +35,14 @@ def ping():
 import os
 import json
 
-TASKS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tasks")
-os.makedirs(TASKS_DIR, exist_ok=True)
+# Define diretório global de tarefas
+TASK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tasks")
+os.makedirs(TASK_DIR, exist_ok=True)
 
 def save_task(task_id, data):
     """Salva o estado da tarefa em um arquivo JSON."""
     try:
-        filepath = os.path.join(TASKS_DIR, f"{task_id}.json")
+        filepath = os.path.join(TASK_DIR, f"{task_id}.json")
         with open(filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -101,7 +51,7 @@ def save_task(task_id, data):
 def load_task(task_id):
     """Carrega o estado da tarefa do arquivo JSON."""
     try:
-        filepath = os.path.join(TASKS_DIR, f"{task_id}.json")
+        filepath = os.path.join(TASK_DIR, f"{task_id}.json")
         if not os.path.exists(filepath):
             return None
         with open(filepath, "r", encoding="utf-8") as f:
