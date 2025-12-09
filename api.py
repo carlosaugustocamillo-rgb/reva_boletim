@@ -324,11 +324,32 @@ def cancelar_tarefa_generica(task_id: str):
     return cancelar_boletim(task_id) # Reutiliza a mesma lógica
 
 @app.get("/status-boletim/{task_id}")
-def get_status_boletim(task_id: str):
-    task = load_task(task_id)
-    if not task:
-        return {"status": "not_found", "message": "Tarefa não encontrada."}
-    return task
+async def status_boletim(task_id: str):
+    status_file = os.path.join(TASK_DIR, f"{task_id}.json")
+    if not os.path.exists(status_file):
+        # Tenta achar log antigo ou retorna 404
+        return {"status": "not_found"}
+        
+    with open(status_file, "r") as f:
+        data = json.load(f)
+    return data
+
+@app.get("/ultimo-roteiro")
+async def get_ultimo_roteiro():
+    """Retorna o JSON do último roteiro gerado para inspeção."""
+    roteiro_dir = os.path.join("data", "roteiros")
+    if not os.path.exists(roteiro_dir):
+        return {"error": "Pasta de roteiros não encontrada."}
+    
+    arquivos = sorted([f for f in os.listdir(roteiro_dir) if f.endswith(".json")], reverse=True)
+    if not arquivos:
+        return {"error": "Nenhum roteiro encontrado."}
+    
+    ultimo_arquivo = os.path.join(roteiro_dir, arquivos[0])
+    with open(ultimo_arquivo, "r", encoding="utf-8") as f:
+        conteudo = json.load(f)
+        
+    return {"arquivo": arquivos[0], "conteudo": conteudo}
 
 @app.post("/criar-revamais")
 def criar_revamais_endpoint(input_data: CampanhaInput):

@@ -163,6 +163,9 @@
             style="text-align: left; margin-top: 20px; font-family: monospace; font-size: 14px; color: #333; background: #f9f9f9; padding: 15px; border-radius: 8px; max-height: 300px; overflow-y: auto; display: none;">
         </div>
 
+        <button onclick="verRoteiro()" style="margin-top: 10px; background-color: #6c757d; font-size: 0.8em;">📄 Ver
+            Último Roteiro (Debug)</button>
+
         <hr style="margin: 40px 0; border: 0; border-top: 1px solid #eee;">
 
         <h2 style="color: #205776;">Campanhas Temáticas</h2>
@@ -321,24 +324,26 @@
 
         async function forceDownload(url, filename) {
             try {
-                // Tenta forçar o download fazendo fetch e criando blob
-                // Isso contorna o problema de abrir em nova aba para arquivos cross-origin
-                const res = await fetch(url);
-                const blob = await res.blob();
+                const response = await fetch(url);
+
+                if (!response.ok) {
+                    throw new Error(`Falha ao baixar arquivo: ${response.status}`);
+                }
+
+                const blob = await response.blob();
                 const blobUrl = window.URL.createObjectURL(blob);
 
-                const a = document.createElement('a');
-                a.style.display = 'none';
-                a.href = blobUrl;
-                a.download = filename; // Nome sugerido para salvar
-                document.body.appendChild(a);
-                a.click();
+                const temporaryLink = document.createElement('a');
+                temporaryLink.style.display = 'none';
+                temporaryLink.href = blobUrl;
+                temporaryLink.download = filename || 'arquivo.mp3';
+                document.body.appendChild(temporaryLink);
+                temporaryLink.click();
 
                 window.URL.revokeObjectURL(blobUrl);
-                document.body.removeChild(a);
-            } catch (e) {
-                console.error("Erro no download forçado:", e);
-                // Fallback: abre em nova aba se falhar o fetch (ex: CORS erro)
+                document.body.removeChild(temporaryLink);
+            } catch (error) {
+                console.error('Erro no download forçado:', error);
                 window.open(url, '_blank');
             }
         }
@@ -363,14 +368,16 @@
 
                 let html = '<ul style="list-style: none; padding: 0;">';
                 lista.forEach(ep => {
-                    const safeName = ep.nome || 'episodio.mp3';
+                    const rawName = (ep.nome && ep.nome.trim()) ? ep.nome.trim() : 'episodio';
+                    const sanitizedName = rawName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+                    const fileName = sanitizedName.toLowerCase().endsWith('.mp3') ? sanitizedName : `${sanitizedName}.mp3`;
                     html += `
                         <li style="margin-bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
                             <div>
                                 <strong>${ep.nome}</strong><br>
                                 <small style="color: #666;">${new Date(ep.data).toLocaleString()} - ${ep.tamanho}</small>
                             </div>
-                            <button onclick="forceDownload('${ep.url}', '${safeName}')" style="background: #28a745; color: white; border:none; cursor:pointer; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; font-weight:bold;">
+                            <button onclick="forceDownload('${ep.url}', '${fileName}')" style="background: #28a745; color: white; border:none; cursor:pointer; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; font-weight:bold;">
                                 ⬇️ Baixar
                             </button>
                         </li>
@@ -597,6 +604,22 @@
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = '📸 Criar Reva +';
+            }
+        }
+        async function verRoteiro() {
+            try {
+                const res = await fetch('/ultimo-roteiro');
+                const data = await res.json();
+
+                if (data.error) {
+                    alert(data.error);
+                } else {
+                    // Abre em nova janela formatado
+                    const w = window.open("", "_blank");
+                    w.document.write("<pre>" + JSON.stringify(data.conteudo, null, 2) + "</pre>");
+                }
+            } catch (e) {
+                alert("Erro ao buscar roteiro.");
             }
         }
     </script>
