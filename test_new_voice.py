@@ -11,8 +11,8 @@ load_dotenv()
 
 # Configurações
 API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-HOST_ID = "k0eIjUFv1GH1DnJFJK46"
-COHOST_ID = "x3mAOLD9WzlmrFCwA1S3"
+HOST_ID = "p5oveq8dCbyBIAaD6gzR"
+COHOST_ID = "tnSpp4vdxKPjI9w0GnoV"
 
 print(f"🔹 Teste rápido de áudio com:")
 print(f"   HOST: {HOST_ID}")
@@ -20,11 +20,18 @@ print(f"   COHOST: {COHOST_ID}")
 
 client = ElevenLabs(api_key=API_KEY)
 
-# Lista de falas para o teste
+# Lista de falas para o teste (5 falas cada)
 dialogo = [
-    {"speaker": "HOST", "text": "Olá! Estamos testando esta nova voz para o RevaCast. Espero que a qualidade esteja boa."},
-    {"speaker": "COHOST", "text": "Oi! Estou te ouvindo bem. O tom parece profissional e claro para o podcast."},
-    {"speaker": "HOST", "text": "Excelente notícia. Vamos encerrar este teste agora. Obrigado!"}
+    {"speaker": "HOST", "text": "Vamos lá então, pessoal! O nosso primeiro estudo de hoje fala sobre os efeitos do exercício na DPOC."},
+    {"speaker": "COHOST", "text": "Isso mesmo. E os resultados parecem bem promissores, não é? O que eles descobriram exatamente?"},
+    {"speaker": "HOST", "text": "Pois é. Eles viram que a reabilitação pulmonar aumentou significativamente a capacidade funcional dos pacientes."},
+    {"speaker": "COHOST", "text": "Interessante! E quanto tempo durou essa intervenção? Foi algo curto ou de longo prazo?"},
+    {"speaker": "HOST", "text": "Foram 12 semanas de treinamento resistido e aeróbico, três vezes por semana."},
+    {"speaker": "COHOST", "text": "Bastante tempo. E imagino que a qualidade de vida também tenha melhorado com esse protocolo."},
+    {"speaker": "HOST", "text": "Exatamente. Os questionários de qualidade de vida mostraram pontuações muito superiores ao grupo controle."},
+    {"speaker": "COHOST", "text": "Muito bom saber disso. Fica a dica clínica importante para nossos ouvintes fisioterapeutas."},
+    {"speaker": "HOST", "text": "Com certeza. Bom, vamos em frente... nesse próximo estudo a gente vai falar sobre asma grave."},
+    {"speaker": "COHOST", "text": "Opa, esse também é um tema quente. Vamos ver o que tem de novo."}
 ]
 
 audios_gerados = []

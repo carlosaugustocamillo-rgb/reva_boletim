@@ -1090,6 +1090,101 @@ def rodar_boletim(opcoes=None):
             if path_abertura_final and os.path.exists(path_abertura_final):
                 audio_paths.append(path_abertura_final)
 
+    # --- Recuperação / Remixagem ---
+
+def remixar_audio_from_firebase():
+    """Baixa segmentos do dia atual do Firebase e remonta o episódio."""
+    try:
+        bucket = storage.bucket()
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        prefix = f"audios_raw/{hoje}/"
+        
+        blobs = list(bucket.list_blobs(prefix=prefix))
+        if not blobs:
+             return {"success": False, "message": f"Nenhum áudio encontrado em {prefix}"}
+             
+        # Ordena: Abertura -> Estudo 1 -> Estudo 2 ...
+        # Nomes esperados: temp_abertura..., temp_estudo1..., temp_estudo1_fala1...
+        # A lógica de geração atual salva 'temp_estudoX_falaY.mp3'.
+        # Precisamos juntar esses falas para formar o estudo, e depois juntar os estudos.
+        
+        print(f"Baixando {len(blobs)} segmentos de {prefix}...")
+        
+        local_dir = os.path.join(DATA_DIR, "remix_temp")
+        os.makedirs(local_dir, exist_ok=True)
+        
+        downloaded_files = []
+        for blob in blobs:
+            if not blob.name.endswith(".mp3"): continue
+            local_path = os.path.join(local_dir, os.path.basename(blob.name))
+            blob.download_to_filename(local_path)
+            downloaded_files.append(local_path)
+            
+        # Ordenação inteligente
+        # Padrão: temp_estudo{X}_fala{Y}.mp3
+        # Precisamos ordenar por X e depois por Y.
+        
+        def sort_key(fname):
+            name = os.path.basename(fname)
+            # Tenta extrair indices
+            try:
+                import re
+                # Busca Estudo X e Fala Y
+                estudo_match = re.search(r'estudo(\d+)', name)
+                fala_match = re.search(r'fala(\d+)', name)
+                
+                e_idx = int(estudo_match.group(1)) if estudo_match else 999
+                f_idx = int(fala_match.group(1)) if fala_match else 0
+                
+                # Se for abertura ou intro algo assim, prioridade maxima
+                if "abertura" in name or "intro" in name:
+                    return (-1, 0)
+                    
+                return (e_idx, f_idx)
+            except:
+                return (999, 999)
+
+        downloaded_files.sort(key=sort_key)
+        
+        print("Montando episódio...")
+        episodio = AudioSegment.silent(duration=500)
+        
+        # Carrega intro fixa se tiver
+        # if os.path.exists(INTRO_PATH): episodio += AudioSegment.from_file(INTRO_PATH)
+        
+        for fpath in downloaded_files:
+            print(f" + Adicionando: {os.path.basename(fpath)}")
+            seg = AudioSegment.from_file(fpath)
+            episodio += seg + AudioSegment.silent(duration=300) # Pequena pausa entre falas
+            
+        # Exporta final
+        final_path = os.path.join(DATA_DIR, "audios", f"episodio_remixado_{hoje}.mp3")
+        episodio.export(final_path, format="mp3")
+        
+        # Upload
+        from firebase_service import upload_file, update_podcast_feed
+        duracao = len(episodio) / 1000.0
+        tamanho = os.path.getsize(final_path)
+        
+        audio_url = upload_file(final_path, f"episodios/{os.path.basename(final_path)}")
+        rss_url = update_podcast_feed(
+            audio_url, 
+            f"RevaCast Weekly - {hoje} (Remix)", 
+            f"Episódio recuperado/remixado em {hoje}.",
+            datetime.now(pytz.utc),
+            duracao,
+            tamanho
+        )
+        
+        # Cleanup
+        for f in downloaded_files: os.remove(f)
+        os.rmdir(local_dir)
+        
+        return {"success": True, "audio_url": audio_url, "rss_url": rss_url, "files_count": len(downloaded_files)}
+
+    except Exception as e:
+        print(f"Erro remix: {e}")
+        return {"success": False, "error": str(e)}
             for estudo_idx, dialogo in enumerate(roteiros_audio):
                 if not isinstance(dialogo, list): continue
                 
@@ -1383,6 +1478,106 @@ def rodar_boletim(opcoes=None):
 
 # Permite testar localmente: python boletim_service.py
 if __name__ == "__main__":
-    res = rodar_boletim()
-    print("\nRESULTADO FINAL:")
-    print(res)
+    for msg in rodar_boletim():
+        print(msg)
+
+# ------------------------------------------------------------------------------
+# FERRAMENTA DE RECUPERAÇÃO / REMIXAGEM
+# ------------------------------------------------------------------------------
+from firebase_admin import storage
+
+def remixar_audio_from_firebase():
+    """Baixa segmentos do dia atual do Firebase e remonta o episódio."""
+    print("🔄 Iniciando Remixagem via Firebase...")
+    try:
+        bucket = storage.bucket()
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        
+        # Procura na pasta do dia
+        prefix = f"audios_raw/{hoje}/"
+        blobs = list(bucket.list_blobs(prefix=prefix))
+        
+        valid_blobs = [b for b in blobs if b.name.endswith(".mp3")]
+        
+        if not valid_blobs:
+             return {"success": False, "message": f"Nenhum áudio encontrado em {prefix}"}
+             
+        print(f"Baixando {len(valid_blobs)} segmentos de {prefix}...")
+        
+        local_dir = os.path.join(DATA_DIR, "remix_temp")
+        os.makedirs(local_dir, exist_ok=True)
+        
+        downloaded_files = []
+        for blob in valid_blobs:
+            local_path = os.path.join(local_dir, os.path.basename(blob.name))
+            blob.download_to_filename(local_path)
+            downloaded_files.append(local_path)
+            
+        # Ordenação inteligente
+        def sort_key(fname):
+            name = os.path.basename(fname)
+            try:
+                import re
+                # Busca 'estudoX' e 'falaY'
+                # Exemplo: temp_UUID_e1_f3.mp3 ou temp_estudo1_fala3.mp3
+                estudo_match = re.search(r'(?:estudo|e)(\d+)', name)
+                fala_match = re.search(r'(?:fala|f)(\d+)', name)
+                
+                e_idx = int(estudo_match.group(1)) if estudo_match else 999
+                f_idx = int(fala_match.group(1)) if fala_match else 0
+                
+                if "abertura" in name or "intro" in name: return (-1, 0)
+                return (e_idx, f_idx)
+            except:
+                return (999, 999)
+
+        downloaded_files.sort(key=sort_key)
+        
+        print(f"Montando episódio com {len(downloaded_files)} arquivos ordenados...")
+        episodio = AudioSegment.silent(duration=500)
+        
+        # Opcional: Intro musical fixa se existir
+        # path_intro = os.path.join(DATA_DIR, "intro.mp3")
+        # if os.path.exists(path_intro): episodio += AudioSegment.from_file(path_intro)
+        
+        for fpath in downloaded_files:
+            seg = AudioSegment.from_file(fpath)
+            episodio += seg + AudioSegment.silent(duration=350)
+            
+        final_path = os.path.join(DATA_DIR, "audios", f"episodio_remixado_{hoje}.mp3")
+        os.makedirs(os.path.dirname(final_path), exist_ok=True)
+        episodio.export(final_path, format="mp3")
+        
+        # Upload
+        from firebase_service import upload_file, update_podcast_feed
+        duracao = len(episodio) / 1000.0
+        tamanho = os.path.getsize(final_path)
+        
+        audio_url = upload_file(final_path, f"episodios/{os.path.basename(final_path)}")
+        rss_url = ""
+        if audio_url:
+            rss_url = update_podcast_feed(
+                audio_url, 
+                f"RevaCast Weekly - {hoje} (Remix)", 
+                f"Episódio recuperado/remixado em {hoje}.",
+                datetime.now(pytz.utc),
+                duracao,
+                tamanho
+            )
+        
+        # Cleanup
+        try:
+            for f in downloaded_files: os.remove(f)
+            os.rmdir(local_dir)
+        except: pass
+        
+        return {
+            "success": True, 
+            "audio_url": audio_url, 
+            "rss_url": rss_url, 
+            "message": f"Remixado {len(downloaded_files)} arquivos. Duração: {duracao:.1f}s"
+        }
+
+    except Exception as e:
+        print(f"Erro remix: {e}")
+        return {"success": False, "error": str(e)}

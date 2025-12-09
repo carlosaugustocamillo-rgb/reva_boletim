@@ -221,7 +221,7 @@
         </div>
 
         <div class="debug-tools">
-            <h3>🛠️ Ferramentas de Debug</h3>
+            <h3>🛠️ Ferramentas de Debug & Recuperação</h3>
             <div style="display:flex; flex-wrap:wrap; align-items:center; gap:10px;">
                 <button id="btnUltimoRoteiro" onclick="verUltimoRoteiro()" style="background-color: #007bff;">
                     📄 Ver Último Roteiro (Debug)
@@ -229,7 +229,10 @@
                 <button id="btnTestFirebase" onclick="testarFirebase()" style="background-color: #ff5722;">
                     🔥 Testar Conexão Firebase
                 </button>
-                <span id="firebaseDebugStatus" style="color: #205776;"></span>
+                <button id="btnRemix" onclick="remixarAudio()" style="background-color: #6f42c1;">
+                    🔄 Recuperar Áudio (Remix)
+                </button>
+                <span id="firebaseDebugStatus" style="color: #205776; font-size: 0.9em; font-weight: bold;"></span>
             </div>
         </div>
 
@@ -768,6 +771,38 @@
                     statusSpan.style.color = '#721c24';
                 }
                 alert('Erro ao testar Firebase: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalLabel;
+            }
+        }
+
+        async function remixarAudio() {
+            const btn = document.getElementById("btnRemix");
+            const status = document.getElementById("firebaseDebugStatus");
+            const originalLabel = btn.innerHTML;
+
+            btn.disabled = true;
+            btn.innerHTML = "⏳ Remixando...";
+            if (status) status.innerText = "Processando solicitação de remix...";
+
+            try {
+                const response = await fetch('/remixar-audio', { method: "POST" });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert(`✅ Remixagem Concluída!\n\n${data.message}`);
+                    const downloadLink = `<a href="javascript:void(0)" onclick="forceDownload('${data.audio_url}', 'episodio_remixado.mp3')" style="color: green; font-weight: bold;">[BAIXAR NOVO ÁUDIO]</a>`;
+                    if (status) status.innerHTML = `✅ Remixado com sucesso! ${downloadLink}`;
+                    listarEpisodios();
+                } else {
+                    alert("❌ Erro ao remixar: " + (data.error || data.message));
+                    if (status) status.innerText = "❌ Erro: " + (data.error || data.message);
+                }
+            } catch (e) {
+                console.error(e);
+                alert("❌ Erro de conexão.");
+                if (status) status.innerText = "❌ Erro de conexão com backend.";
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalLabel;

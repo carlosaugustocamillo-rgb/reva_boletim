@@ -336,6 +336,17 @@ async def start_firebase_test():
         results["storage"] = f"❌ ERRO EXCEÇÃO: {str(e)}"
         
     return results
+    return results
+
+@app.post("/remixar-audio")
+def endpoint_remixar_audio():
+    """Tenta recuperar e remixar áudios do dia direto do Firebase."""
+    try:
+        from boletim_service import remixar_audio_from_firebase
+        resultado = remixar_audio_from_firebase()
+        return resultado
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 @app.post("/criar-revamais")
 def criar_revamais_endpoint(input_data: CampanhaInput):
