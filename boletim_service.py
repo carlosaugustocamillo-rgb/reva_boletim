@@ -1093,11 +1093,31 @@ def rodar_boletim(opcoes=None):
                     
                     estudo_audios = []
                     for fala_idx, fala in enumerate(dialogo):
-                        text = fala.get('text', '')
-                        if not text: continue
+                        # Normaliza formato do JSON (pode vir {"HOST": "texto"} ou {"speaker": "HOST", "text": "texto"})
+                        speaker_clean = "HOST"
+                        text = ""
+                        
+                        if 'text' in fala:
+                            # Formato estruturado
+                            text = fala.get('text', '')
+                            speaker_clean = fala.get('speaker', 'HOST').strip().upper()
+                        else:
+                            # Formato chave-valor
+                            if 'HOST' in fala:
+                                speaker_clean = 'HOST'
+                                text = fala['HOST']
+                            elif 'COHOST' in fala:
+                                speaker_clean = 'COHOST'
+                                text = fala['COHOST']
+                            
+                        if not text: 
+                            print(f"⚠️ Fala vazia ou formato desconhecido no índice {fala_idx}: {fala}")
+                            continue
+                            
                         total_chars_elevenlabs += len(text)
                         
-                        speaker_clean = fala.get('speaker', 'HOST').strip().upper()
+                        # DEBUG: Ver quem está falando
+                        # print(f"   [FALA {fala_idx+1}] Speaker: '{speaker_clean}'")
                         
                         # DEBUG: Ver quem está falando
                         print(f"   [FALA {fala_idx+1}] Speaker JSON: '{fala.get('speaker')}' -> Clean: '{speaker_clean}'")
