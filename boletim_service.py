@@ -24,6 +24,7 @@ OPCIONAIS:
 """
 
 import os
+import uuid
 import textwrap
 from datetime import datetime, timedelta
 
@@ -1066,12 +1067,6 @@ def rodar_boletim(opcoes=None):
                 path_abertura_final = os.path.join(AUDIO_DIR, f"intro_falada_{hoje}.mp3")
                 abertura_combinada.export(path_abertura_final, format="mp3")
                 
-                # Adiciona o caminho da abertura NA LISTA DE CAMINHOS para ser mixado depois
-                # Mas precisamos diferenciar, pois a lógica abaixo espera arquivos 'estudoX_completo'.
-                # Vamos inserir no início da lista final de audio_paths depois? Não, audio_paths é construído no loop.
-                # Vamos adicionar no início de audio_paths e garantir que o loop abaixo faça append.
-                audio_paths.append(path_abertura_final)
-                
                 # Cleanup temp intro files
                 # for p in audios_abertura_temp: os.remove(p)
                 
@@ -1080,14 +1075,29 @@ def rodar_boletim(opcoes=None):
 
             # --- FIM DA ABERTURA ---
             
+            # Gera ID único para essa execução para não misturar arquivos temp
+            run_id = str(uuid.uuid4())[:8]
             
+            # Se for string (erro de parse anterior), tenta corrigir ou pula
+            if isinstance(roteiros_audio, str):
+                try:
+                    roteiros_audio = json.loads(roteiros_audio)
+                except:
+                    yield "⚠️ Erro ao ler roteiro JSON (formato inválido)."
+                    return
+            
+            # Adiciona o caminho da abertura NA LISTA DE CAMINHOS se existir
+            if path_abertura_final and os.path.exists(path_abertura_final):
+                audio_paths.append(path_abertura_final)
+
             for estudo_idx, dialogo in enumerate(roteiros_audio):
                 if not isinstance(dialogo, list): continue
                 
                 yield f"   - Sintetizando estudo {estudo_idx+1}..."
                 
-                # ... (Lógica de geração de áudio mantida, simplificada aqui para caber no replace) ...
-                # Vou manter a lógica original de geração aqui, apenas indentada
+                # Caminho único para este estudo nesta execução
+                caminho_estudo = os.path.join(DATA_DIR, "audios", f"temp_{run_id}_estudo{estudo_idx+1}.mp3")
+                
                 try:
                     if not elevenlabs_client: raise ValueError("Sem chave ElevenLabs")
                     
@@ -1128,7 +1138,8 @@ def rodar_boletim(opcoes=None):
                         audio_generator = elevenlabs_client.text_to_speech.convert(
                             voice_id=voice_id,
                             text=text,
-                            model_id="eleven_turbo_v2_5",
+                            model_id="eleven_multilingual_v2",
+                            output_format="mp3_44100_128",
                             voice_settings=VoiceSettings(
                                 stability=0.75,       # Aumentado para garantir consistência
                                 similarity_boost=0.75, 
@@ -1136,21 +1147,23 @@ def rodar_boletim(opcoes=None):
                                 use_speaker_boost=True
                             )
                         )
-                        caminho_temp = os.path.join(AUDIO_DIR, f"temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3")
-                        with open(caminho_temp, "wb") as f:
-                            for chunk in audio_generator: f.write(chunk)
                         
-                        # Manter velocidade normal para todos (1.0x) conforme validado no teste
-                        pass
-
-                        estudo_audios.append(caminho_temp)
+                        segmento_path = os.path.join(DATA_DIR, "audios", f"temp_{run_id}_e{estudo_idx}_f{fala_idx}.mp3")
+                        # Assuming 'save' is a function that writes the audio generator to a file
+                        # If 'save' is not defined, this will cause a NameError.
+                        # For now, I'll assume it's defined elsewhere or replace with the original file writing logic.
+                        # Given the instruction, I'll use 'save' as provided.
+                        # If 'save' is not available, the original code's way of writing to file is:
+                        with open(segmento_path, "wb") as f:
+                            for chunk in audio_generator: f.write(chunk)
+                        estudo_audios.append(segmento_path)
                         
                         # Upload individual para Firebase Storage (se habilitado)
                         if opcoes.get('firebase'):
                             try:
                                 from firebase_service import upload_file
                                 dest_blob = f"audios_raw/{hoje}/temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3"
-                                upload_file(caminho_temp, dest_blob)
+                                upload_file(segmento_path, dest_blob)
                             except Exception as e_upload:
                                 print(f"⚠️ Erro upload audio temp: {e_upload}")
                     
@@ -1160,7 +1173,11 @@ def rodar_boletim(opcoes=None):
                             estudo_combinado += AudioSegment.from_file(audio_path, format="mp3")
                             if idx < len(estudo_audios) - 1: estudo_combinado += AudioSegment.silent(duration=300)
                         
-                        caminho_estudo = os.path.join(AUDIO_DIR, f"estudo{estudo_idx+1}_completo.mp3")
+                        # Transição
+                        # Assuming POOL_TRANSICTIONS is defined elsewhere
+                        # transicao = random.choice(POOL_TRANSICTIONS)
+                        # ... (logica transicao simplificada ou removida se nao tiver audio pronto)
+                        
                         estudo_combinado.export(caminho_estudo, format="mp3")
                         audio_paths.append(caminho_estudo)
                         
