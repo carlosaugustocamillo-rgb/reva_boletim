@@ -832,7 +832,11 @@ def rodar_boletim(opcoes=None):
                 'Systematic Review', 
                 'Meta-Analysis', 
                 'Practice Guideline',
-                'Guideline'
+                'Guideline',
+                'Clinical Trial',
+                'Review',
+                'Observational Study',
+                'Comparative Study'
             ]
             
             artigos_podcast = []
@@ -1138,17 +1142,53 @@ def rodar_boletim(opcoes=None):
             # Intro e mixagem final
             if audio_paths:
                 yield "   - Montando episódio final..."
+                print(f"📂 Arquivos para mixagem ({len(audio_paths)}):")
+                for p in audio_paths:
+                    sz = os.path.getsize(p) if os.path.exists(p) else 0
+                    print(f"   -> {p} ({sz/1024:.1f} KB)")
+                    
                 try:
-                    intro_audio = AudioSegment.from_file(INTRO_PATH, format="mp3")
+                    # Carrega intro musical fixa (intro_guto.mp3 ou similar) se existir, senão silêncio
+                    if os.path.exists(INTRO_PATH):
+                        intro_audio = AudioSegment.from_file(INTRO_PATH, format="mp3")
+                    else:
+                        intro_audio = AudioSegment.silent(duration=1000)
+
                     episodio = intro_audio + AudioSegment.silent(duration=1000)
+                    
                     for caminho in audio_paths:
-                        episodio += AudioSegment.from_file(caminho, format="mp3") + AudioSegment.silent(duration=2500)
+                        try:
+                            segmento = AudioSegment.from_file(caminho, format="mp3")
+                            episodio += segmento + AudioSegment.silent(duration=2500)
+                        except Exception as e_seg:
+                            print(f"⚠️ Erro ao adicionar segmento {caminho}: {e_seg}")
+                    
                     episodio.export(episodio_path, format="mp3")
                     print(f"🎧 Episódio salvo: {episodio_path}")
                     yield f"💰 Consumo ElevenLabs: {total_chars_elevenlabs} chars."
+                    
+                    if opcoes.get('firebase'):
+                        # Upload do episódio final
+                        from firebase_service import upload_file, update_podcast_feed
+                        duracao = len(episodio) / 1000.0
+                        tamanho = os.path.getsize(episodio_path)
+                        
+                        audio_url = upload_file(episodio_path, f"episodios/{os.path.basename(episodio_path)}")
+                        if audio_url:
+                            # Update Feed
+                            rss_url = update_podcast_feed(
+                                audio_url, 
+                                f"RevaCast Weekly - {hoje}", 
+                                f"Episódio gerado automaticamente em {hoje}. Destaques da semana.",
+                                datetime.now(pytz.utc),
+                                duracao,
+                                tamanho
+                            )
+                            yield {"audio_url": audio_url, "rss_url": rss_url}
+                            
                 except Exception as e:
-                    print(f"Erro mixagem: {e}")
-                    yield f"❌ Erro ao montar episódio: {e}"
+                    print(f"Erro montagem final: {e}")
+                    raise e
         else:
             yield "⚠️ Sem roteiro novo para gerar áudio."
     else:
