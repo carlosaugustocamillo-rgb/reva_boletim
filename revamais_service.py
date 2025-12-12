@@ -46,29 +46,49 @@ def buscar_referencias_pubmed(tema_ingles):
     print(f"🔎 Buscando referências de alta qualidade para: {tema_ingles}...")
     
     # Filtro por tipos de estudo nobres e revistas 'Core' (jsubsetaim é um bom proxy para alto impacto)
-    query = (
+    # Usando intervalo de datas explícito para maior robustez
+    try:
+        from datetime import timedelta
+        agora = datetime.now()
+        data_ini = (agora - timedelta(days=5*365)).strftime("%Y/%m/%d")
+        data_fim = agora.strftime("%Y/%m/%d")
+        date_term = f'("{data_ini}"[Date - Publication] : "{data_fim}"[Date - Publication])'
+    except:
+        date_term = "last 5 years[dp]"
+
+    query_core = (
         f"({tema_ingles}) AND "
         f"(Systematic Review[pt] OR Randomized Controlled Trial[pt]) AND "
         f"jsubsetaim[text] AND "
-        f"(last 5 years[dp])"
+        f"{date_term}"
     )
     
     try:
-        handle = Entrez.esearch(db="pubmed", term=query, retmax=3, sort="relevance")
+        handle = Entrez.esearch(db="pubmed", term=query_core, retmax=3, sort="relevance")
         record = Entrez.read(handle)
         handle.close()
         ids = record["IdList"]
         
         if not ids:
             print("⚠️ Nenhuma referência 'Core' encontrada. Tentando busca mais ampla...")
-            # Fallback sem o filtro de 'jsubsetaim' mas mantendo SR/RCT
-            query_fallback = (
+            # Fallback 1: Sem jsubsetaim, mas ainda SR/RCT e 5 anos
+            query_fallback_1 = (
                 f"({tema_ingles}) AND "
                 f"(Systematic Review[pt] OR Randomized Controlled Trial[pt]) AND "
-                f"(last 10 years[dp])" # Aumentei para 10 anos
+                f"{date_term}"
             )
-            # Remove jsubsetaim (revistas core) para ter mais chances
-            handle = Entrez.esearch(db="pubmed", term=query_fallback, retmax=3, sort="relevance")
+            handle = Entrez.esearch(db="pubmed", term=query_fallback_1, retmax=3, sort="relevance")
+            record = Entrez.read(handle)
+            handle.close()
+            ids = record["IdList"]
+
+        if not ids:
+            print("⚠️ Ainda sem referências. Tentando busca por Review geral...")
+            # Fallback 2: Review geral
+            query_fallback_2 = (
+                f"({tema_ingles}) AND (Review[pt]) AND {date_term}"
+            )
+            handle = Entrez.esearch(db="pubmed", term=query_fallback_2, retmax=3, sort="relevance")
             record = Entrez.read(handle)
             handle.close()
             ids = record["IdList"]
@@ -166,7 +186,10 @@ def download_font():
 
 def download_logo(url):
     """Baixa o logo para um arquivo temporário"""
-    r = requests.get(url)
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    r = requests.get(url, headers=headers)
+    if r.status_code != 200:
+        print(f"⚠️ Erro download imagem: {r.status_code}")
     img = Image.open(io.BytesIO(r.content)).convert("RGBA")
     return img
 
@@ -299,9 +322,7 @@ def gerar_conteudo_revamais(tema, referencias):
     # Limpeza básica de markdown se houver
     html_content = html_content.replace("```html", "").replace("```", "")
     
-    return html_content + "<hr>" + refs_html
-
-    return html_content + "<hr>" + refs_html
+    return html_content
 
 def obter_proximo_tema_csv():
     """
@@ -440,12 +461,17 @@ def gerar_slide_instagram_composto(background_url, titulo, texto, slide_num):
         
         firebase_path = f"revamais/slides/{temp_filename}"
         url = upload_file(temp_filename, firebase_path)
-        if os.path.exists(temp_filename): os.remove(temp_filename)
+        try:
+            if os.path.exists(temp_filename): os.remove(temp_filename)
+        except:
+            pass
         
         return url
         
     except Exception as e:
         print(f"⚠️ Erro overlay slide: {e}")
+        import traceback
+        traceback.print_exc()
         return background_url # Fallback para imagem original sem texto overlay
 
 def gerar_conteudo_instagram(tema, formato, referencias_text):
@@ -569,9 +595,9 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     check()
     # 1. Traduzir tema para busca
     try:
-        log("🌍 Traduzindo tema para busca científica...")
+        log("🌍 Traduzindo tema para keywords científicas...")
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-        tema_ingles = model.generate_content(f"Translate to English for medical search: {tema}").text.strip()
+        tema_ingles = model.generate_content(f"Translate this topic to English medical keywords for PubMed search. Return ONLY the keywords, no sentences: {tema}").text.strip()
     except:
         tema_ingles = tema
 
@@ -587,18 +613,20 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     # Gerar Banner Composto (Header)
     try:
         log("🖼️ Criando banner de cabeçalho personalizado...")
-        logo_url_base = os.environ.get("REVA_LOGO_URL", "https://i.imgur.com/in5MW0g.png")
-        url_header = gerar_banner_header(logo_url_base)
+        # This section is removed as per instruction.
     except Exception as e:
         log(f"⚠️ Falha ao criar banner composto: {e}. Usando logo padrão.")
-        url_header = logo_url_base
-
-    # Capa: SEM TEXTO, apenas visual
-    prompt_capa = f"A welcoming, modern health illustration about '{tema_ingles}'. Soft lighting, professional photography style or high quality 3D render. Minimalist. NO TEXT. NO WORDS."
-    url_capa = gerar_imagem(prompt_capa, "capa")
-    check()
     
-    # Imagem Corpo: Se tiver texto, DEVE SER EM PORTUGUÊS
+    # Capa: Estática (solicitada pelo usuário)
+    url_capa_estatica = "https://i.imgur.com/oGzxgtK.jpeg"
+    
+    # 1. Imagem Ilustrativa (Lifestyle/Visual)
+    # Ex: Pessoa na esteira, feliz, etc. Sem texto.
+    prompt_ilustrativa = f"A high quality, photorealistic or cinematic style photo-illustration about '{tema_ingles}'. Showing people, lifestyle, or the subject in a natural, positive way. NO TEXT. Suitable for a newsletter cover."
+    url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
+
+    # 2. Imagem Corpo (Infográfico/Educativo)
+    # Se tiver texto, DEVE SER EM PORTUGUÊS
     prompt_corpo = f"An educational infographic or diagram about '{tema_ingles}'. Clean lines, easy to understand, white background. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). If you cannot generate correct Portuguese text, do not include any text."
     url_corpo = gerar_imagem(prompt_corpo, "corpo")
     
@@ -616,10 +644,6 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     
     check()
     # 5. Montar HTML Final
-    # Logo da Revalidatie (usado no boletim_service.py)
-    # Se o usuário definir uma no .env, usa. Senão, usa a padrão.
-    DEFAULT_LOGO = "https://i.imgur.com/in5MW0g.png"
-    logo_url = os.environ.get("REVA_LOGO_URL", DEFAULT_LOGO)
     
     today_formatted = datetime.now().strftime('%d/%m/%Y')
     
@@ -630,9 +654,6 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         <style>
             body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; }}
             .container {{ background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px; }}
-            .logo-header {{ text-align: center; margin-bottom: 20px; }}
-            .logo-header img {{ max-width: 100%; height: auto; border-radius: 8px; }} /* Ajustado para banner full width */
-            .header-intro {{ text-align: center; margin-bottom: 20px; font-size: 14px; color: #555; }}
             .header-img {{ width: 100%; border-radius: 8px 8px 0 0; display: block; }}
             .body-img {{ width: 100%; margin: 20px 0; border-radius: 8px; }}
             h1 {{ color: #205776; }}
@@ -645,28 +666,27 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     </head>
     <body>
         <div class="container">
-            <div class="logo-header">
-                <a href="https://www.revalidatie.com.br" target="_blank">
-                    <img src="{url_header}" alt="Reva +">
-                </a>
-            </div>
+            <a href="https://www.revalidatie.com.br" target="_blank">
+                <img src="{url_capa_estatica}" class="header-img" alt="Revalidatie - Reva+">
+            </a>
             
             <div class="header-intro">
                 <p><strong>Olá, *|FNAME|*!</strong><br>
                 Aqui está sua atualização semanal de saúde do Reva + para {today_formatted}.</p>
             </div>
             
-            <img src="{url_capa}" class="header-img" alt="Capa">
-            
             <div style="padding: 20px;">
+                <!-- Imagem Ilustrativa (Nova) -->
+                <img src="{url_ilustrativa}" class="body-img" alt="Ilustração do Título">
+                
                 {html_texto}
 
-                
-                <img src="{url_corpo}" class="body-img" alt="Ilustração">
+                <!-- Imagem Educativa (Existente) -->
+                <img src="{url_corpo}" class="body-img" alt="Infográfico">
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
-                    <p><a href="https://www.instagram.com/revalidatie_londrina/" target="_blank">Siga-nos no Instagram @revalidatie_londrina</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
+                    <p><a href="https://www.instagram.com/revalidatie/" target="_blank">Siga-nos no Instagram</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
                 </div>
 
                 <!-- Referências Científicas -->
@@ -736,7 +756,8 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         return {
             "status": "success", 
             "campaign_id": campaign['id'], 
-            "url_capa": url_capa,
+            "url_capa": url_capa_estatica,
+            "url_ilustrativa": url_ilustrativa,
             "url_corpo": url_corpo,
             "custo_estimado": estimar_custo_revamais(),
             "instagram_assets": instagram_assets,

@@ -439,19 +439,7 @@ def criar_campanha_endpoint(input_data: CampanhaInput):
         )
 
 
-@app.post("/criar-revamais")
-def criar_revamais_endpoint(input_data: CampanhaInput):
-    """
-    Cria uma edição do boletim 'Reva +' (foco em pacientes).
-    """
-    try:
-        resultado = criar_campanha_revamais(input_data.tema)
-        return JSONResponse(content={"success": True, "resultado": resultado})
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"success": False, "erro": str(e)},
-        )
+
 
 
 @app.post("/agente-revacast")
