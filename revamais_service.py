@@ -765,9 +765,15 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     try:
         log("🌍 Traduzindo tema para keywords científicas...")
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-        raw_keywords = model.generate_content(f"Translate this topic to English medical keywords for PubMed search. Return ONLY the keywords, no sentences: {tema}").text.strip()
-        # Limpa quebras de linha que quebram a busca no PubMed
-        tema_ingles = raw_keywords.replace('\n', ' OR ').replace(',', ' OR ')
+        # Prompt otimizado para gerar query booleana específica
+        prompt_query = (
+            f"Create a specific PubMed Search Query for the topic: '{tema}'. "
+            "Use boolean operators (AND, OR) to combine MeSH terms or keywords. "
+            "IMPORTANT: Use 'AND' to intersect distinct concepts (e.g. 'Diabetes AND Exercise'). "
+            "Use 'OR' only for synonyms. "
+            "Return ONLY the query string, nothing else. No explanation."
+        )
+        tema_ingles = model.generate_content(prompt_query).text.strip().replace('"', '') # Remove aspas extras se houver
     except:
         tema_ingles = tema
 
