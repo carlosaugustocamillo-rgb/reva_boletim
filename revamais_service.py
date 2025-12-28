@@ -797,8 +797,8 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
                 days_until = 7
             
             next_date = now_utc + timedelta(days=days_until)
-            # Define 15:00 UTC (12:00 BRT)
-            schedule_time = next_date.replace(hour=15, minute=0, second=0, microsecond=0)
+            # Define 10:30 UTC (07:30 BRT)
+            schedule_time = next_date.replace(hour=10, minute=30, second=0, microsecond=0)
             
             # Garante que seja no futuro (Mailchimp exige pelo menos 15 min de antecedência)
             if schedule_time < (datetime.utcnow() + timedelta(minutes=15)):
@@ -808,7 +808,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
             
             mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
-            log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC)")
+            log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC) [07:30 BRT]")
             
         except Exception as e:
             # Muitos planos gratuitos não permitem agendamento via API
