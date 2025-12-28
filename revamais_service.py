@@ -306,25 +306,30 @@ def gerar_conteudo_revamais(tema, referencias):
     
     Tema: "{tema}"
     
-    INSTRUÇÃO CRÍTICA:
-    Abaixo estão 3 resumos científicos (abstracts) recentes sobre o tema.
-    Você DEVE escrever o artigo baseando-se EXCLUSIVAMENTE nas evidências apresentadas nestes resumos.
-    Não alucine informações. Se os resumos não cobrirem algo, generalize com cautela, mas priorize os dados abaixo.
+    INSTRUÇÃO DE ESCRITA HÍBRIDA (Conhecimento Geral + Evidência Específica):
     
-    --- EVIDÊNCIA CIENTÍFICA ---
+    1. **Contexto e Mecanismo (Use seu conhecimento médico geral)**:
+       - Comece explicando o problema de forma empática (ex: "Você sente dor ao caminhar?").
+       - Explique O PORQUÊ (Fisiologia/Mecanismo): Por que isso acontece? O que muda no corpo com o tratamento? (Ex: fale sobre circulação colateral, eficiência muscular, neuroplasticidade).
+       - O usuário GOSTA dessa explicação educativa do "como funciona".
+    
+    2. **O Que a Ciência Diz (Baseado nos Abstracts abaixo)**:
+       - Agora, cite as evidências fornecidas.
+       - Use os abstracts para validar a explicação anterior.
+       - Diga "Estudos recentes mostram que..." e use os dados dos resumos.
+    
+    --- EVIDÊNCIA CIENTÍFICA (Para a seção 'O Que a Ciência Diz') ---
     {chr(10).join([ f'Artigo {i+1}: {r["texto"]}{chr(10)}Resumo: {r["resumo"]}{chr(10)}' for i, r in enumerate(referencias) ])}
-    ----------------------------
+    -----------------------------------------------------------------
     
-    Escreva um artigo curto, informativo e acolhedor.
+    Estrutura HTML (retorne APENAS o conteúdo dentro do body e APENAS HTML):
+    1. <h1>Título Atraente e Emocional</h1>
+    2. <p>Introdução empática + Explicação do Mecanismo (Por que dói? Por que melhora? - Use conhecimento geral de fisiologia).</p>
+    3. <h2>O que a Ciência Comprova?</h2> (Aqui você insere a "tradução" dos abstracts acima, conectando com a explicação).
+    4. <h2>Dicas Práticas</h2> (Conselhos acionáveis baseados nos abstracts e boas práticas).
+    5. <div class="cta"> (Convite para seguir @revalidatie_londrina).
     
-    Estrutura HTML (retorne APENAS o conteúdo dentro do body, sem tags html/body):
-    1. <h1>Título Atraente</h1>
-    2. <p>Introdução conectando com o dia a dia.</p>
-    3. <h2>O que a ciência diz?</h2> (Explicação baseada nos abstracts acima. Cite "estudos recentes mostram..." sem ser técnico demais).
-    4. <h2>Dicas Práticas</h2> (Conclusões práticas extraídas dos abstracts).
-    5. <div class="cta"> (Um texto convidando para seguir no Instagram @revalidatie_londrina ou visitar o site).
-    
-    Use tom otimista e baseado em evidências.
+    Tom de voz: Médico amigo, especialista, otimista e educativo.
     """
     
     try:
