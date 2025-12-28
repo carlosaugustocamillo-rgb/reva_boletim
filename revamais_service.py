@@ -520,9 +520,9 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             
             RULES FOR 'image_prompt_english':
             1.  **Visual Style**: Clean, Minimalist, "Apple-like" medical aesthetic. Teal/White color palette. High Quality.
-            2.  **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific 'titulo' and 'texto_curto' of the slide.
+            2.  **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific '{{titulo}}' and '{{texto_curto}}' of the slide.
             3.  **Density**: Avoid clutter. Use ONE central visual element (icon, illustration, or chart) that matches the text.
-            4.  **Text Instruction**: Explicitly state: "Include the text: '{titulo}' and '{texto_curto}' in the image. Typography must be legible, modern, sans-serif."
+            4.  **Text Instruction**: Explicitly state: "Include the text: '{{titulo}}' and '{{texto_curto}}' in the image. Typography must be legible, modern, sans-serif."
             5.  **No Hallucinations**: Do not ask for logos.
             
             SLIDE STRUCTURE:
