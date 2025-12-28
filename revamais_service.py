@@ -176,7 +176,8 @@ def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename
 
     # Upload
     try:
-        firebase_path = f"revamais/{nome_arquivo_prefixo}_{datetime.now().strftime('%Y-%m-%d')}.png"
+        timestamp_upload = datetime.now().strftime('%Y%m%d_%H%M%S')
+        firebase_path = f"revamais/{nome_arquivo_prefixo}_{timestamp_upload}.png"
         url = upload_file(temp_filename, firebase_path)
         if not keep_local and os.path.exists(temp_filename): 
             os.remove(temp_filename)
@@ -545,34 +546,33 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             # User offered logo. usage: overlay_logo(final_url, logo_url)
             
             for slide in slides_data:
-                # Inicializa variáveis para evitar UnboundLocalError
-                titulo = "Sem Título"
-                texto = "Sem Texto"
-                visual_prompt = f"Slide about {tema}"
+                # Inicializa variáveis com nomes distintos para evitar colisão de escopo
+                slide_titulo = "Sem Título"
+                slide_texto = "Sem Texto"
+                slide_visual_prompt = f"Slide about {tema}"
+                slide_num = 0
                 
                 try:
                     slide_num = slide.get('slide', 0)
-                    titulo = slide.get('titulo', f"Slide {slide_num}")
-                    texto = slide.get('texto_curto', "")
-                    visual_prompt = slide.get('image_prompt_english', f"Medical illustration about {tema}")
+                    slide_titulo = slide.get('titulo', f"Slide {slide_num}")
+                    slide_texto = slide.get('texto_curto', "")
+                    slide_visual_prompt = slide.get('image_prompt_english', f"Medical illustration about {tema}")
                 except Exception as e_parse:
                     print(f"⚠️ Erro ao ler dados do slide: {e_parse}")
                 
-                # Adiciona reforço de estilo se a IA esquecer
+                # Reforço de prompt
                 full_prompt = (
-                    f"{visual_prompt} "
+                    f"{slide_visual_prompt} "
                     f"Style: Clean, Minimalist, High Contrast. Format: SQUARE (1:1). "
                     f"NO CLUTTER. Focus on the central message."
                 )
 
-                # Gera imagem com IA
+                # Gera imagem
                 local_base_name = f"slide_{slide_num}_{timestamp}"
                 local_filename = f"{local_base_name}.png"
                 
-                # Gera
                 gerar_imagem(full_prompt, local_base_name, keep_local=True, forced_filename=local_filename)
                 
-                # APLICA LOGO (Se existir função - implementarei a seguir)
                 try:
                     aplicar_logo_overlay(local_filename, slide_num) 
                 except:
@@ -580,14 +580,13 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
 
                 files_to_zip.append(local_filename)
                 
-                # Upload final (já com logo)
                 final_url = upload_file(local_filename, f"revamais/slides/{local_base_name}.png")
 
                 assets.append({
                     "type": "image", 
                     "url": final_url, 
-                    "name": f"Slide {slide_num}: {titulo}",
-                    "texto_base": texto
+                    "name": f"Slide {slide_num}: {slide_titulo}",
+                    "texto_base": slide_texto
                 })
 
             # Criar arquivo ZIP com todas as imagens
@@ -653,7 +652,9 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     try:
         log("🌍 Traduzindo tema para keywords científicas...")
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-        tema_ingles = model.generate_content(f"Translate this topic to English medical keywords for PubMed search. Return ONLY the keywords, no sentences: {tema}").text.strip()
+        raw_keywords = model.generate_content(f"Translate this topic to English medical keywords for PubMed search. Return ONLY the keywords, no sentences: {tema}").text.strip()
+        # Limpa quebras de linha que quebram a busca no PubMed
+        tema_ingles = raw_keywords.replace('\n', ' OR ').replace(',', ' OR ')
     except:
         tema_ingles = tema
 
