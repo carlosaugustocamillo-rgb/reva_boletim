@@ -572,6 +572,7 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                 # Prompt FINAL (Completo com Texto)
                 full_prompt = (
                     f"Create a high-quality educational Instagram slide image. "
+                    f"Format: SQUARE (1:1 Aspect Ratio). Do NOT generate widescreen. "
                     f"Theme: '{tema}'. "
                     f"Headline Text to Include: '{titulo}'. "
                     f"Body Text to Include: '{texto}'. "
