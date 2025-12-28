@@ -419,99 +419,47 @@ def obter_proximo_tema_csv():
 
 import textwrap
 
-def gerar_slide_instagram_composto(background_url, titulo, texto, slide_num):
+def aplicar_logo_overlay(local_filename, slide_num):
     """
-    Baixa o background gerado por IA, e desenha o texto por cima com Pillow.
-    Garante legibilidade e branding.
+    Aplica o logo da clínica no canto superior direito do slide gerado.
     """
     try:
-        # Configurações
-        W, H = 1080, 1080
-        font_path = download_font() # Garante fonte
+        # Configs
+        LOGO_URL = "https://i.imgur.com/oGzxgtK.jpeg" # Placeholder (Use logo real da Revalidatie aqui)
+        MARGIN = 40
+        LOGO_WIDTH = 180
         
-        # Baixa imagem de fundo
-        bg_img = download_logo(background_url).convert("RGBA").resize((W, H))
+        # Abre imagem original
+        img = Image.open(local_filename).convert("RGBA")
+        W, H = img.size
         
-        # Cria overlay para escurecer e melhorar leitura
-        overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-        draw = ImageDraw.Draw(overlay)
-        
-        # Gradiente ou bloco sólido: Vamos usar um bloco semi-transparente na parte inferior/meio
-        # Style: Clean Modern. 
-        # Title at top (with dark bg behind it maybe?)
-        # Body text centered or bottom.
-        
-        # Desenha um retângulo branco semi-transparente cobrindo a area do texto
-        # Margens
-        margin_x = 80
-        margin_y = 150
-        
-        # --- TITLE ---
-        # Caixa do Tiulo - Azul Escuro
-        title_bg_color = (32, 87, 118, 240) # #205776 com alpha
-        draw.rectangle([0, 80, W, 280], fill=title_bg_color)
-        
-        font_title = ImageFont.truetype(font_path, 70)
-        
-        # Wrap title
-        title_lines = textwrap.wrap(titulo, width=25) # Ajustar width conforme font size
-        current_h = 110
-        for line in title_lines:
-            # Centraliza texto horizontalmente
-            bbox = draw.textbbox((0, 0), line, font=font_title)
-            text_w = bbox[2] - bbox[0]
-            draw.text(((W - text_w) / 2, current_h), line, font=font_title, fill="white")
-            current_h += 80
-
-        # --- BODY TEXT ---
-        # Se tiver texto
-        if texto:
-            font_body = ImageFont.truetype(font_path, 45)
-            # Caixa de texto corpo - Branco suave
-            body_bg_color = (255, 255, 255, 220)
-            
-            # Area pro texto: Y=350 ate Y=900
-            draw.rectangle([40, 350, W-40, 900], fill=body_bg_color, outline=None, width=0)
-            
-            body_lines = textwrap.wrap(texto, width=40)
-            current_h = 400
-            for line in body_lines:
-                bbox = draw.textbbox((0, 0), line, font=font_body)
-                text_w = bbox[2] - bbox[0]
-                draw.text(((W - text_w) / 2, current_h), line, font=font_body, fill=(50, 50, 50))
-                current_h += 55
-
-        # --- FOOTER / BRANDING ---
-        # Pequena barra embaixo
-        draw.rectangle([0, H-60, W, H], fill=(32, 87, 118, 255))
-        font_footer = ImageFont.truetype(font_path, 24)
-        footer_text = "@revalidatie_londrina | Boletim Reva +"
-        draw.text((margin_x, H-45), footer_text, fill="white", font=font_footer)
-        
-        # Paginação
-        draw.text((W - margin_x - 50, H-45), f"{slide_num}/7", fill="white", font=font_footer)
-
-        # Composite
-        final_img = Image.alpha_composite(bg_img, overlay)
-        
-        # Salva e Upload
-        temp_filename = f"slide_comp_{slide_num}_{datetime.now().strftime('%H%M%S')}.png"
-        final_img.save(temp_filename, "PNG")
-        
-        firebase_path = f"revamais/slides/{temp_filename}"
-        url = upload_file(temp_filename, firebase_path)
+        # Baixa Logo
         try:
-            if os.path.exists(temp_filename): os.remove(temp_filename)
-        except:
-            pass
-        
-        return url
-        
+            logo = download_logo(LOGO_URL)
+            # Redimensiona logo mantendo aspect ratio
+            w_percent = (LOGO_WIDTH / float(logo.size[0]))
+            h_size = int((float(logo.size[1]) * float(w_percent)))
+            logo = logo.resize((LOGO_WIDTH, h_size), Image.Resampling.LANCZOS)
+            
+            # Posição: Topo Direito
+            x = W - LOGO_WIDTH - MARGIN
+            y = MARGIN
+            
+            # Paste
+            img.paste(logo, (x, y), logo) # Usa logo como máscara se tiver transparência
+            
+            # Salva sobrescrevendo
+            img.save(local_filename, "PNG")
+            print(f"   ✅ Logo aplicado no slide {slide_num}")
+            
+        except Exception as e_download:
+            print(f"⚠️ Erro ao baixar/aplicar logo: {e_download}")
+            # Se falhar logo, mantém imagem original
+            
     except Exception as e:
-        print(f"⚠️ Erro overlay slide: {e}")
+        print(f"⚠️ Erro fatal no overlay de logo: {e}")
         import traceback
         traceback.print_exc()
-        return background_url # Fallback para imagem original sem texto overlay
 
 def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None):
     """
@@ -545,25 +493,41 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             contexto_extra = f"\nBASEIE-SE ESTRITAMENTE NESTE CONTEÚDO JÁ GERADO:\n{conteudo_base}\n" if conteudo_base else ""
             
             prompt_slides = f"""
-            Crie o planejamento de um Carrossel Educativo (7 slides) para Instagram.
-            {contexto_extra}
-            Tema: "{tema}"
-            Tom: Educativo, sério porém acessível, foco em Fisioterapia.
+            You are an expert Visual Storyteller and AI Prompter.
+            Plan a 7-slide Instagram Carousel based strictly on the content below.
             
-            Retorne APENAS um JSON:
+            CONTENT TO ADAPT:
+            ---
+            {conteudo_base}
+            ---
+            
+            THEME: "{tema}"
+            AUDIENCE: Patients (Laypeople).
+            TONE: Professional Physiotherapist, Encouraging, Educational.
+            
+            RETURN ONLY A JSON LIST with this structure:
             [
-              {{"slide": 1, "titulo": "...", "texto_curto": "..."}},
+              {{
+                "slide": 1,
+                "titulo": "Hook Title (Portuguese)",
+                "texto_curto": "Short Body Text (Portuguese, max 25 words)",
+                "image_prompt_english": "Detailed prompt for Imagen 3 model..."
+              }},
               ...
             ]
             
-            Regras para os Textos:
-            - Títulos: Máximo 5 palavras. Impactantes.
-            - Texto Curto (Corpo): Máximo 30 palavras. Resumido, direto ao ponto.
-            - Slide 1: Título é a dor/problema, Texto é uma provocação baseada no conteúdo acima.
-            - Slide 2-3: Explicação científica (use a do conteúdo base).
-            - Slide 4-6: Dicas e Soluções (use as do conteúdo base).
-            - Slide 7: Título "Gostou?", Texto "Siga @revalidatie_londrina para mais dicas.".
-            - IMPORTANTE: Use sempre "Consulte seu Fisioterapeuta", NUNCA "Médico".
+            RULES FOR 'image_prompt_english':
+            1.  **Visual Style**: Clean, Minimalist, "Apple-like" medical aesthetic. Teal/White color palette. High Quality.
+            2.  **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific 'titulo' and 'texto_curto' of the slide.
+            3.  **Density**: Avoid clutter. Use ONE central visual element (icon, illustration, or chart) that matches the text.
+            4.  **Text Instruction**: Explicitly state: "Include the text: '{titulo}' and '{texto_curto}' in the image. Typography must be legible, modern, sans-serif."
+            5.  **No Hallucinations**: Do not ask for logos.
+            
+            SLIDE STRUCTURE:
+            - Slide 1: Hook/Pain (Illustration of the symptom).
+            - Slide 2-3: Education (Simplified mechanism like 'Angiogenesis').
+            - Slide 4-6: Solutions (Exercises, Habits).
+            - Slide 7: CTA (Text: "Gostou? Siga @revalidatie_londrina").
             """
             
             try:
@@ -571,39 +535,46 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
                 response_text = response_text.replace("```json", "").replace("```", "").strip()
                 slides_data = json.loads(response_text)
             except:
-                # Fallback structure
-                slides_data = [{"slide": i+1, "titulo": f"Slide {i+1}", "texto_curto": tema} for i in range(7)]
+                slides_data = [{"slide": i+1, "titulo": f"Slide {i+1}", "texto_curto": tema, "image_prompt_english": f"Slide about {tema}"} for i in range(7)]
 
-            print(f"   🖼️ Gerando 7 slides COMPOSTOS (IA + Texto Overlay)...")
+            print(f"   🖼️ Gerando 7 slides (Prompt Dinâmico por Slide)...")
             files_to_zip = []
+            
+            # URL da Logo (Hardcoded para teste ou parametrizável)
+            logo_url = "https://i.imgur.com/oGzxgtK.jpeg" # Placeholder/Header Image used as logo source or need actual logo
+            # User offered logo. usage: overlay_logo(final_url, logo_url)
             
             for slide in slides_data:
                 slide_num = slide.get('slide')
                 titulo = slide.get('titulo')
                 texto = slide.get('texto_curto')
+                visual_prompt = slide.get('image_prompt_english')
                 
-                # Prompt FINAL (Completo com Texto)
+                # Adiciona reforço de estilo se a IA esquecer
                 full_prompt = (
-                    f"Create a high-quality educational Instagram slide image. "
-                    f"Format: SQUARE (1:1 Aspect Ratio). Do NOT generate widescreen. "
-                    f"Theme: '{tema}'. "
-                    f"Headline Text to Include: '{titulo}'. "
-                    f"Body Text to Include: '{texto}'. "
-                    f"Design Instructions: Create a complete infographic-style layout. "
-                    f"Integrate the text naturally into the design with high legibility. "
-                    f"Use relevant medical illustrations, icons, or diagrams to explain the concept. "
-                    f"Style: Professional, clean, modern medical aesthetic (Teal/White/Blue). "
-                    f"Language: Portuguese. Ensure correct spelling. "
-                    f"CRITICAL: DO NOT INCLUDE ANY LOGOS. NO BRANDING. KEEP BACKGROUND CLEAN."
+                    f"{visual_prompt} "
+                    f"Style: Clean, Minimalist, High Contrast. Format: SQUARE (1:1). "
+                    f"NO CLUTTER. Focus on the central message."
                 )
 
-                # Gera imagem final direto com a IA (Mantendo arquivo local para ZIP)
+                # Gera imagem com IA
                 local_base_name = f"slide_{slide_num}_{timestamp}"
                 local_filename = f"{local_base_name}.png"
                 
-                final_url = gerar_imagem(full_prompt, local_base_name, keep_local=True, forced_filename=local_filename)
+                # Gera
+                gerar_imagem(full_prompt, local_base_name, keep_local=True, forced_filename=local_filename)
+                
+                # APLICA LOGO (Se existir função - implementarei a seguir)
+                try:
+                    aplicar_logo_overlay(local_filename, slide_num) 
+                except:
+                   pass
+
                 files_to_zip.append(local_filename)
                 
+                # Upload final (já com logo)
+                final_url = upload_file(local_filename, f"revamais/slides/{local_base_name}.png")
+
                 assets.append({
                     "type": "image", 
                     "url": final_url, 
