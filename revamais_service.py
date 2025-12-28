@@ -555,20 +555,25 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                 titulo = slide.get('titulo')
                 texto = slide.get('texto_curto')
                 
-                # Prompt APENAS VISUAL (Sem texto)
-                visual_prompt = (
-                    f"A professional medical illustration background for a slide about: '{titulo}'. "
-                    f"Context: {texto}. "
-                    f"Style: Clean, minimalist, white/teal background, abstract shapes or anatomical diagram. "
-                    f"IMPORTANT: NO TEXT. NO LABELS. EMPTY SPACE IN THE CENTER for text overlay."
+                # Prompt FINAL (Completo com Texto)
+                full_prompt = (
+                    f"Create a high-quality educational Instagram slide image. "
+                    f"Theme: '{tema}'. "
+                    f"Headline Text to Include: '{titulo}'. "
+                    f"Body Text to Include: '{texto}'. "
+                    f"Design Instructions: Create a complete infographic-style layout. "
+                    f"Integrate the text naturally into the design with high legibility. "
+                    f"Use relevant medical illustrations, icons, or diagrams to explain the concept. "
+                    f"Style: Professional, clean, modern medical aesthetic (Teal/White/Blue). "
+                    f"Language: Portuguese. Ensure correct spelling."
                 )
 
-                # Gera background limpo
-                temp_name = f"bg_slide_{slide_num}_{timestamp}"
-                bg_url = gerar_imagem(visual_prompt, temp_name)
+                # Gera imagem final direto com a IA
+                temp_name = f"slide_{slide_num}_{timestamp}"
+                final_url = gerar_imagem(full_prompt, temp_name)
                 
-                # Composição (Texto overlay)
-                final_url = gerar_slide_instagram_composto(bg_url, titulo, texto, slide_num)
+                # Composição (Texto overlay) - DESATIVADO (User preference for AI Native text)
+                # final_url = gerar_slide_instagram_composto(bg_url, titulo, texto, slide_num)
                 
                 assets.append({
                     "type": "image", 
