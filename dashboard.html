@@ -673,6 +673,13 @@
                                         <a href="${asset.url}" target="_blank" style="background:#6f42c1; color:white; padding:5px 10px; border-radius:4px;">Baixar Roteiro .md</a>
                                     </div>
                                 `;
+                            } else if (asset.type === 'zip') {
+                                instaHtml += `
+                                    <div style="margin:10px 0; padding:10px; background:#e2e6ea; border-radius:5px;">
+                                        📦 <strong>${asset.name}</strong>: 
+                                        <a href="${asset.url}" target="_blank" style="background:#28a745; color:white; padding:8px 15px; border-radius:4px; text-decoration:none; font-weight:bold;">Baixar ZIP Completo</a>
+                                    </div>
+                                `;
                             }
                         });
                         instaHtml += `</div>`;

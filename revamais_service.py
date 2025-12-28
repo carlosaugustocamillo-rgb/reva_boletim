@@ -131,12 +131,16 @@ def buscar_referencias_pubmed(tema_ingles):
         print(f"⚠️ Erro ao buscar referências: {e}")
         return []
 
-def gerar_imagem(prompt, nome_arquivo_prefixo):
+def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename=None):
     """
     Gera imagem via Gemini ou DALL-E e faz upload.
     """
     print(f"🎨 Gerando imagem ({nome_arquivo_prefixo})...")
-    temp_filename = f"temp_{nome_arquivo_prefixo}_{datetime.now().strftime('%H%M%S')}.png"
+    if forced_filename:
+        temp_filename = forced_filename
+    else:
+        temp_filename = f"temp_{nome_arquivo_prefixo}_{datetime.now().strftime('%H%M%S')}.png"
+    
     image_generated = False
     
     # Tenta Gemini
@@ -174,7 +178,8 @@ def gerar_imagem(prompt, nome_arquivo_prefixo):
     try:
         firebase_path = f"revamais/{nome_arquivo_prefixo}_{datetime.now().strftime('%Y-%m-%d')}.png"
         url = upload_file(temp_filename, firebase_path)
-        if os.path.exists(temp_filename): os.remove(temp_filename)
+        if not keep_local and os.path.exists(temp_filename): 
+            os.remove(temp_filename)
         return url
     except Exception as e:
         print(f"   ❌ Erro Upload: {e}")
@@ -564,6 +569,8 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                 slides_data = [{"slide": i+1, "titulo": f"Slide {i+1}", "texto_curto": tema} for i in range(7)]
 
             print(f"   🖼️ Gerando 7 slides COMPOSTOS (IA + Texto Overlay)...")
+            files_to_zip = []
+            
             for slide in slides_data:
                 slide_num = slide.get('slide')
                 titulo = slide.get('titulo')
@@ -583,12 +590,12 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                     f"Language: Portuguese. Ensure correct spelling."
                 )
 
-                # Gera imagem final direto com a IA
-                temp_name = f"slide_{slide_num}_{timestamp}"
-                final_url = gerar_imagem(full_prompt, temp_name)
+                # Gera imagem final direto com a IA (Mantendo arquivo local para ZIP)
+                local_base_name = f"slide_{slide_num}_{timestamp}"
+                local_filename = f"{local_base_name}.png"
                 
-                # Composição (Texto overlay) - DESATIVADO (User preference for AI Native text)
-                # final_url = gerar_slide_instagram_composto(bg_url, titulo, texto, slide_num)
+                final_url = gerar_imagem(full_prompt, local_base_name, keep_local=True, forced_filename=local_filename)
+                files_to_zip.append(local_filename)
                 
                 assets.append({
                     "type": "image", 
@@ -596,6 +603,27 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                     "name": f"Slide {slide_num}: {titulo}",
                     "texto_base": texto
                 })
+
+            # Criar arquivo ZIP com todas as imagens
+            try:
+                import zipfile
+                zip_name = f"instagram_carrossel_{timestamp}.zip"
+                print(f"   📦 Criando ZIP: {zip_name}...")
+                
+                with zipfile.ZipFile(zip_name, 'w') as zf:
+                    for f in files_to_zip:
+                        if os.path.exists(f):
+                            zf.write(f)
+                            os.remove(f) # Limpa imagem individual após adicionar ao zip
+                
+                # Upload ZIP
+                zip_url = upload_file(zip_name, f"instagram/{zip_name}")
+                if os.path.exists(zip_name): os.remove(zip_name)
+                
+                assets.append({"type": "zip", "url": zip_url, "name": "Baixar Todas as Imagens (.zip)"})
+                
+            except Exception as e:
+                print(f"⚠️ Erro ao criar ZIP: {e}")
                 
     except Exception as e:
         print(f"❌ Erro ao gerar conteúdo Instagram: {e}")
