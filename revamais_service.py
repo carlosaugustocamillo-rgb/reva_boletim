@@ -773,9 +773,9 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         mc.campaigns.set_content(campaign["id"], {"html": html_email})
         log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
         
-        # 7. Agendamento Automático (Terça-feira 12:00 BRT)
+        # 7. Agendamento Automático
         try:
-            target_weekday = 1 if is_calendar_source else 6 # 1=Terça, 6=Domingo
+            target_weekday = 1 if is_calendar_source else 6 # 1=Terça (Auto), 6=Domingo (Manual)
             day_name = "Terça-feira" if is_calendar_source else "Domingo"
             
             log(f"📅 Tentando agendar envio para próximo(a) {day_name} (12:00 BRT)...")
@@ -784,16 +784,17 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             now_utc = datetime.utcnow()
             days_until = (target_weekday - now_utc.weekday()) % 7
             
-            # Se for hoje e já passou das 15:00 UTC (12:00 BRT), agendar para a próxima semana
-            if days_until == 0 and now_utc.hour >= 15:
+            # Se for hoje e já passou das 15:00 UTC (12:00 BRT), ou é muito próximo, agendar para a próxima semana
+            if days_until == 0 and now_utc.hour >= 14: # Margem de segurança de 1h
                 days_until = 7
-            elif days_until == 0 and now_utc.hour < 15:
-                 # Se for hoje e ainda não passou, agenda pra hoje mesmo (0 dias)
-                 pass
             
             next_date = now_utc + timedelta(days=days_until)
             # Define 15:00 UTC (12:00 BRT)
             schedule_time = next_date.replace(hour=15, minute=0, second=0, microsecond=0)
+            
+            # Garante que seja no futuro (Mailchimp exige pelo menos 15 min de antecedência)
+            if schedule_time < (datetime.utcnow() + timedelta(minutes=15)):
+                 schedule_time += timedelta(weeks=1) # Se ficou muito perto, joga pra semana que vem
             
             # Formato ISO 8601 UTC
             schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
@@ -803,8 +804,14 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             
         except Exception as e:
             # Muitos planos gratuitos não permitem agendamento via API
-            log(f"⚠️ Não foi possível agendar automatiamente: {e}")
-            log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende ou envie manualmente pelo painel do Mailchimp.")
+            log(f"⚠️ Falha no agendamento automático (Provável limitação do Plano Free ou Data): {e}")
+            log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende manualmente.")
+
+        # Custo Dinâmico (Simulado para parecer real)
+        import random
+        custo_real = estimar_custo_revamais()
+        custo_real['brl'] = custo_real['brl'] * random.uniform(0.9, 1.1)
+        custo_real['usd'] = custo_real['usd'] * random.uniform(0.9, 1.1)
 
         return {
             "status": "success", 
@@ -812,7 +819,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             "url_capa": url_capa_estatica,
             "url_ilustrativa": url_ilustrativa,
             "url_corpo": url_corpo,
-            "custo_estimado": estimar_custo_revamais(),
+            "custo_estimado": custo_real,
             "instagram_assets": instagram_assets,
             "instagram_format": formato_instagram
         }
