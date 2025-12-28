@@ -425,7 +425,7 @@ def aplicar_logo_overlay(local_filename, slide_num):
     """
     try:
         # Configs
-        LOGO_URL = "https://i.imgur.com/oGzxgtK.jpeg" # Placeholder (Use logo real da Revalidatie aqui)
+        LOGO_URL = "https://i.imgur.com/A2d27eq.png" # Logo Revalidatie (Extraído do Album)
         MARGIN = 40
         LOGO_WIDTH = 180
         
