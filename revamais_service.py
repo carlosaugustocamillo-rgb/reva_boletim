@@ -334,7 +334,8 @@ def gerar_conteudo_revamais(tema, referencias):
     4. <h2>Dicas Práticas</h2> (Conselhos acionáveis baseados nos abstracts e boas práticas).
     5. <div class="cta"> (Convite para seguir @revalidatie_londrina).
     
-    Tom de voz: Médico amigo, especialista, otimista e educativo.
+    Tom de voz: Fisioterapeuta especialista, amigo, otimista e educativo. 
+    IMPORTANTE: Sempre direcione para "Consulte seu Fisioterapeuta" e NUNCA "Consulte seu Médico". O contexto é reabilitação física.
     """
     
     try:
@@ -512,7 +513,7 @@ def gerar_slide_instagram_composto(background_url, titulo, texto, slide_num):
         traceback.print_exc()
         return background_url # Fallback para imagem original sem texto overlay
 
-def gerar_conteudo_instagram(tema, formato, referencias_text):
+def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None):
     """
     Gera conteúdo para Instagram (Reel ou Carrossel).
     Melhoria v2: Gera texto com LLM, Imagem Clean com IA, e Texto via Overlay (Pillow).
@@ -540,10 +541,14 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
             
         elif formato.lower() == "carrossel":
             print("   📝 Planejando narrativa do carrossel...")
+            
+            contexto_extra = f"\nBASEIE-SE ESTRITAMENTE NESTE CONTEÚDO JÁ GERADO:\n{conteudo_base}\n" if conteudo_base else ""
+            
             prompt_slides = f"""
             Crie o planejamento de um Carrossel Educativo (7 slides) para Instagram.
+            {contexto_extra}
             Tema: "{tema}"
-            Tom: Educativo, sério porém acessível, foco em fisioterapia/saúde.
+            Tom: Educativo, sério porém acessível, foco em Fisioterapia.
             
             Retorne APENAS um JSON:
             [
@@ -554,10 +559,11 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
             Regras para os Textos:
             - Títulos: Máximo 5 palavras. Impactantes.
             - Texto Curto (Corpo): Máximo 30 palavras. Resumido, direto ao ponto.
-            - Slide 1: Título é a dor/problema, Texto é uma provocação.
-            - Slide 2-3: Explicação científica simplificada.
-            - Slide 4-6: Dicas, Exercícios ou Soluções.
+            - Slide 1: Título é a dor/problema, Texto é uma provocação baseada no conteúdo acima.
+            - Slide 2-3: Explicação científica (use a do conteúdo base).
+            - Slide 4-6: Dicas e Soluções (use as do conteúdo base).
             - Slide 7: Título "Gostou?", Texto "Siga @revalidatie_londrina para mais dicas.".
+            - IMPORTANTE: Use sempre "Consulte seu Fisioterapeuta", NUNCA "Médico".
             """
             
             try:
@@ -587,7 +593,8 @@ def gerar_conteudo_instagram(tema, formato, referencias_text):
                     f"Integrate the text naturally into the design with high legibility. "
                     f"Use relevant medical illustrations, icons, or diagrams to explain the concept. "
                     f"Style: Professional, clean, modern medical aesthetic (Teal/White/Blue). "
-                    f"Language: Portuguese. Ensure correct spelling."
+                    f"Language: Portuguese. Ensure correct spelling. "
+                    f"CRITICAL: DO NOT INCLUDE ANY LOGOS. NO BRANDING. KEEP BACKGROUND CLEAN."
                 )
 
                 # Gera imagem final direto com a IA (Mantendo arquivo local para ZIP)
@@ -710,7 +717,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     log("📸 Criando conteúdo para Instagram...")
     # Extrai texto das referências para passar de contexto
     refs_text_context = "\n".join([r['texto'] for r in referencias])
-    instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context)
+    instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context, conteudo_base=html_texto)
     
     check()
     # 5. Montar HTML Final
