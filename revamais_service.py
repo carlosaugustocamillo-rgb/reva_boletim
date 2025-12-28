@@ -303,7 +303,7 @@ def gerar_conteudo_revamais(tema, referencias):
     2. <p>Introdução conectando com o dia a dia.</p>
     3. <h2>O que a ciência diz?</h2> (Explicação simples, sem jargões difíceis).
     4. <h2>Dicas Práticas</h2> (Lista bullet points com conselhos aplicáveis).
-    5. <div class="cta"> (Um texto convidando para seguir no Instagram @revalidatie ou visitar o site).
+    5. <div class="cta"> (Um texto convidando para seguir no Instagram @revalidatie_londrina ou visitar o site).
     
     Use tom otimista e baseado em evidências.
     """
@@ -686,7 +686,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
-                    <p><a href="https://www.instagram.com/revalidatie/" target="_blank">Siga-nos no Instagram</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
+                    <p><a href="https://www.instagram.com/revalidatie_londrina/" target="_blank">Siga-nos no Instagram</a> ou <a href="https://www.revalidatie.com.br" target="_blank">Visite nosso site</a></p>
                 </div>
 
                 <!-- Referências Científicas -->
