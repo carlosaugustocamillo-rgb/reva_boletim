@@ -589,6 +589,9 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     log_callback: função(str) para enviar logs.
     check_cancel: função() -> bool que retorna True se deve cancelar.
     """
+    # Identifica fonte do tema para agendamento
+    is_calendar_source = not tema or tema.strip() == ""
+    
     def log(msg):
         print(msg) # Mantém print no stdout
         if log_callback: log_callback(msg)
@@ -746,20 +749,25 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         
         # 7. Agendamento Automático (Terça-feira 12:00 BRT)
         try:
-            log("📅 Tentando agendar envio para próxima Terça-feira (12:00 BRT)...")
+            target_weekday = 1 if is_calendar_source else 6 # 1=Terça, 6=Domingo
+            day_name = "Terça-feira" if is_calendar_source else "Domingo"
             
-            # Cálculo da próxima terça
+            log(f"📅 Tentando agendar envio para próximo(a) {day_name} (12:00 BRT)...")
+            
+            # Cálculo do próximo dia alvo
             now_utc = datetime.utcnow()
-            days_until_tuesday = (1 - now_utc.weekday()) % 7
+            days_until = (target_weekday - now_utc.weekday()) % 7
             
-            # Se hoje for terça e já passou das 15:00 UTC (12:00 BRT), agendar para a próxima
-            # Se for antes, agenda pra hoje mesmo? Vamos assumir sempre D+7 se já passou.
-            if days_until_tuesday == 0 and now_utc.hour >= 15:
-                days_until_tuesday = 7
-                
-            next_tuesday = now_utc + timedelta(days=days_until_tuesday)
+            # Se for hoje e já passou das 15:00 UTC (12:00 BRT), agendar para a próxima semana
+            if days_until == 0 and now_utc.hour >= 15:
+                days_until = 7
+            elif days_until == 0 and now_utc.hour < 15:
+                 # Se for hoje e ainda não passou, agenda pra hoje mesmo (0 dias)
+                 pass
+            
+            next_date = now_utc + timedelta(days=days_until)
             # Define 15:00 UTC (12:00 BRT)
-            schedule_time = next_tuesday.replace(hour=15, minute=0, second=0, microsecond=0)
+            schedule_time = next_date.replace(hour=15, minute=0, second=0, microsecond=0)
             
             # Formato ISO 8601 UTC
             schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
