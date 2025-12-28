@@ -110,9 +110,19 @@ def buscar_referencias_pubmed(tema_ingles):
             pmid = article['MedlineCitation']['PMID']
             link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
             
+            # Extração do Abstract
+            abstract_text = ""
+            if 'Abstract' in article['MedlineCitation']['Article']:
+                abstract_data = article['MedlineCitation']['Article']['Abstract'].get('AbstractText', [])
+                if isinstance(abstract_data, list):
+                    abstract_text = " ".join([str(item) for item in abstract_data])
+                else:
+                    abstract_text = str(abstract_data)
+            
             referencias.append({
                 "texto": f"{primeiro_autor}. {titulo}. {journal}, {ano}.",
-                "link": link
+                "link": link,
+                "resumo": abstract_text
             })
             
         return referencias
@@ -296,13 +306,22 @@ def gerar_conteudo_revamais(tema, referencias):
     
     Tema: "{tema}"
     
+    INSTRUÇÃO CRÍTICA:
+    Abaixo estão 3 resumos científicos (abstracts) recentes sobre o tema.
+    Você DEVE escrever o artigo baseando-se EXCLUSIVAMENTE nas evidências apresentadas nestes resumos.
+    Não alucine informações. Se os resumos não cobrirem algo, generalize com cautela, mas priorize os dados abaixo.
+    
+    --- EVIDÊNCIA CIENTÍFICA ---
+    {chr(10).join([ f'Artigo {i+1}: {r["texto"]}{chr(10)}Resumo: {r["resumo"]}{chr(10)}' for i, r in enumerate(referencias) ])}
+    ----------------------------
+    
     Escreva um artigo curto, informativo e acolhedor.
     
     Estrutura HTML (retorne APENAS o conteúdo dentro do body, sem tags html/body):
     1. <h1>Título Atraente</h1>
     2. <p>Introdução conectando com o dia a dia.</p>
-    3. <h2>O que a ciência diz?</h2> (Explicação simples, sem jargões difíceis).
-    4. <h2>Dicas Práticas</h2> (Lista bullet points com conselhos aplicáveis).
+    3. <h2>O que a ciência diz?</h2> (Explicação baseada nos abstracts acima. Cite "estudos recentes mostram..." sem ser técnico demais).
+    4. <h2>Dicas Práticas</h2> (Conclusões práticas extraídas dos abstracts).
     5. <div class="cta"> (Um texto convidando para seguir no Instagram @revalidatie_londrina ou visitar o site).
     
     Use tom otimista e baseado em evidências.
