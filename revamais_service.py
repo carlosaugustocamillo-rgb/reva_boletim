@@ -343,8 +343,17 @@ def gerar_conteudo_revamais(tema, referencias):
         )
         html_content = response.choices[0].message.content
 
-    # Limpeza básica de markdown se houver
+    # Limpeza de Markdown e Tags de Estrutura (<html>, <body>) que quebram o layout
     html_content = html_content.replace("```html", "").replace("```", "")
+    
+    # Remover tags estruturais se a IA teimosamente as incluir
+    import re
+    html_content = re.sub(r'<!DOCTYPE[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'<html[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'</html>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'<head>.*?</head>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+    html_content = re.sub(r'<body[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'</body>', '', html_content, flags=re.IGNORECASE)
     
     return html_content
 
