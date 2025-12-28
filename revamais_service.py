@@ -1,7 +1,7 @@
 import os
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import google.generativeai as genai
 from openai import OpenAI
@@ -545,10 +545,18 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             # User offered logo. usage: overlay_logo(final_url, logo_url)
             
             for slide in slides_data:
-                slide_num = slide.get('slide')
-                titulo = slide.get('titulo')
-                texto = slide.get('texto_curto')
-                visual_prompt = slide.get('image_prompt_english')
+                # Inicializa variáveis para evitar UnboundLocalError
+                titulo = "Sem Título"
+                texto = "Sem Texto"
+                visual_prompt = f"Slide about {tema}"
+                
+                try:
+                    slide_num = slide.get('slide', 0)
+                    titulo = slide.get('titulo', f"Slide {slide_num}")
+                    texto = slide.get('texto_curto', "")
+                    visual_prompt = slide.get('image_prompt_english', f"Medical illustration about {tema}")
+                except Exception as e_parse:
+                    print(f"⚠️ Erro ao ler dados do slide: {e_parse}")
                 
                 # Adiciona reforço de estilo se a IA esquecer
                 full_prompt = (
