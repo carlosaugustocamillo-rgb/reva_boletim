@@ -365,10 +365,11 @@ def gerar_conteudo_revamais(tema, referencias):
     
     return html_content
 
+from firebase_service import read_json_from_storage
+
 def obter_proximo_tema_csv():
     """
-    Lê o arquivo 'calendario_editorial_150_semanas.csv', pega o próximo tema
-    não utilizado, marca como usado e retorna o Título.
+    Lê o calendário e usa o Firebase para persistir quais TEMAS já foram usados (Estado Global).
     """
     csv_filename = "calendario_editorial_150_semanas.csv"
     csv_path = os.path.join(os.path.dirname(__file__), csv_filename)
@@ -377,40 +378,54 @@ def obter_proximo_tema_csv():
         print(f"⚠️ Arquivo {csv_filename} não encontrado.")
         return None
         
-    tema_escolhido = None
+    # 1. Carrega todas as linhas do CSV (Read-Only)
     rows = []
-    headers = []
-    
-    # Lê todo o arquivo
     with open(csv_path, 'r', encoding='utf-8') as f:
         reader = csv.DictReader(f)
-        headers = reader.fieldnames
-        # Garante que coluna 'Used' exista nos headers
-        if 'Used' not in headers:
-            headers.append('Used')
+        rows = list(reader)
         
-        for row in reader:
-            rows.append(row)
-            
-    # Procura o primeiro não usado
-    idx_escolhido = -1
-    for i, row in enumerate(rows):
-        is_used = (row.get('Used') or '').strip()
-        if not is_used:
-            tema_escolhido = row.get('Title', row.get('Theme', 'Tema Genérico'))
-            formato_escolhido = row.get('Format', 'Carrossel')
-            # Marca como usado
-            rows[i]['Used'] = datetime.now().isoformat()
-            idx_escolhido = i
-            break
+    total_linhas = len(rows)
     
+    # 2. Busca estado atual no Firebase
+    state_file = "revamais/used_themes_state.json"
+    state_data = read_json_from_storage(state_file)
+    
+    if not state_data:
+        state_data = {"used_titles": []}
+        
+    used_titles = set(state_data.get("used_titles", []))
+    
+    # 3. Encontra o primeiro não utilizado
+    tema_escolhido = None
+    formato_escolhido = "Carrossel"
+    idx_atual = 0
+    
+    for i, row in enumerate(rows):
+        titulo = row.get('Title', row.get('Theme', '')).strip()
+        if titulo and titulo not in used_titles:
+            tema_escolhido = titulo
+            formato_escolhido = row.get('Format', 'Carrossel')
+            idx_atual = i + 1
+            break
+            
     if tema_escolhido:
-        # Salva o arquivo atualizado
-        with open(csv_path, 'w', encoding='utf-8', newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=headers)
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"📅 Tema do Calendário Selecionado: {tema_escolhido}")
+        print(f"📅 Tema do Calendário Selecionado: {tema_escolhido} (Item {idx_atual}/{total_linhas})")
+        
+        # 4. Atualiza estado e salva no Firebase
+        used_titles.add(tema_escolhido)
+        state_data["used_titles"] = list(used_titles)
+        state_data["last_updated"] = datetime.now().isoformat()
+        
+        # Cria arquivo local temporário para upload
+        with NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
+            json.dump(state_data, tmp)
+            tmp_path = tmp.name
+            
+        try:
+            upload_file(tmp_path, state_file)
+        finally:
+             if os.path.exists(tmp_path): os.remove(tmp_path)
+             
         return {
             "tema": tema_escolhido,
             "formato": formato_escolhido

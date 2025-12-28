@@ -66,6 +66,26 @@ def upload_file(local_path, destination_blob_name):
     print(f"✅ Upload concluído: {blob.public_url}")
     return blob.public_url
 
+def read_json_from_storage(source_blob_name):
+    """Lê um arquivo JSON do Storage e retorna como dict/list."""
+    if not firebase_admin._apps:
+        print("❌ Firebase não inicializado.")
+        return None
+    
+    try:
+        bucket = storage.bucket()
+        blob = bucket.blob(source_blob_name)
+        
+        if not blob.exists():
+            return None
+            
+        json_data = blob.download_as_string()
+        import json
+        return json.loads(json_data)
+    except Exception as e:
+        print(f"⚠️ Erro ao ler JSON do storage ({source_blob_name}): {e}")
+        return None
+
 def update_podcast_feed(episodio_audio_url, episodio_titulo, episodio_descricao, data_pub, duracao_segundos, tamanho_bytes):
     """
     Gera ou atualiza o feed RSS do podcast e faz upload para o Firebase.
