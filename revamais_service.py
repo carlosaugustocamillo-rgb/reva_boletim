@@ -39,98 +39,195 @@ MC_LIST_ID = os.environ.get("MC_LIST_ID_REVAMAIS", "510b954f9a")
 MC_FROM_NAME = os.environ.get("MC_FROM_NAME", "Revalidatie")
 MC_REPLY_TO = os.environ.get("MC_REPLY_TO", "contato@revalidatie.com.br")
 
+
+# -------------------------------------------------------------------------
+# Helpers de Qualidade de Referência (JCR + Keywords)
+# -------------------------------------------------------------------------
+
+_JCR_CACHE = None
+
+def load_jcr_data():
+    """
+    Carrega o arquivo CSV do JCR na memória para consulta rápida de Fator de Impacto.
+    Retorna um dict: { "JOURNAL NAME UPPER": float(impact_factor) }
+    """
+    global _JCR_CACHE
+    if _JCR_CACHE is not None:
+        return _JCR_CACHE
+        
+    jcr_path = os.path.join(os.path.dirname(__file__), "CarlosCamillo_JCR_JournalResults_12_2025.csv")
+    if not os.path.exists(jcr_path):
+        print("⚠️ Arquivo JCR não encontrado. Scores de impacto serão 0.")
+        return {}
+        
+    cache = {}
+    try:
+        with open(jcr_path, 'r', encoding='utf-8') as f:
+            # Pula linhas de cabeçalho inicial até encontrar o header real
+            lines = f.readlines()
+            start_idx = 0
+            for i, line in enumerate(lines):
+                if line.startswith("Journal name,"):
+                    start_idx = i
+                    break
+            
+            reader = csv.DictReader(lines[start_idx:])
+            for row in reader:
+                name = row.get("Journal name", "").upper().strip()
+                jif_val = row.get("2024 JIF")
+                if jif_val is None: jif_val = "0"
+                jif_str = str(jif_val).replace(",", "") # Remove milhar se houver
+                try:
+                    jif = float(jif_str)
+                except:
+                    jif = 0.0
+                
+                if name:
+                    cache[name] = jif
+                    # Cache também variações comuns (ex: sem THE)
+                    if name.startswith("THE "):
+                        cache[name[4:]] = jif
+                        
+        print(f"✅ JCR Data carregado: {len(cache)} revistas.")
+        _JCR_CACHE = cache
+        return cache
+    except Exception as e:
+        print(f"❌ Erro ao carregar JCR: {e}")
+        return {}
+
+def generate_search_keywords(tema):
+    """
+    Usa LLM para extrair 3-5 keywords OBRIGATÓRIAS em Inglês para o tema.
+    Essas keywords serão usadas para filtrar resultados irrelevantes.
+    """
+    try:
+        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        prompt = (
+            f"Analyze the medical topic: '{tema}'. "
+            "Return a Python list of strings with 3 to 5 ESSENTIAL English keywords (single words or short bi-grams) "
+            "that MUST appear in a valid scientific article about this topic. "
+            "Focus on the pathology, anatomy, or intervention. "
+            "Example output format: ['Hypertension', 'Blood Pressure', 'Cardiovascular']"
+        )
+        response = model.generate_content(prompt).text
+        # Limpeza básica para extrair a lista
+        import ast
+        start = response.find('[')
+        end = response.rfind(']') + 1
+        if start != -1 and end != -1:
+            keywords = ast.literal_eval(response[start:end])
+            return [k.lower().strip() for k in keywords if isinstance(k, str)]
+        return []
+    except Exception as e:
+        print(f"⚠️ Falha ao gerar keywords: {e}")
+        return []
+
 def buscar_referencias_pubmed(tema_ingles):
     """
-    Busca 3 artigos recentes e relevantes no PubMed para servir de referência.
-    Filtra por Revisões Sistemáticas e RCTs em revistas de alto impacto (Core Clinical Journals).
+    Busca artigos no PubMed com filtro rigoroso de qualidade e relevância.
+    1. Busca 30 candidatos (SR/RCT/Review).
+    2. Filtra: Título/Abstract TEM que ter keywords do tema (Relevância).
+    3. Rankeia: Prioriza JCR Impact Factor alto.
+    4. Retorna Top 5.
     """
-    print(f"🔎 Buscando referências de alta qualidade para: {tema_ingles}...")
+    print(f"🔎 Buscando referências para: {tema_ingles}...")
     
-    # Filtro por tipos de estudo nobres e revistas 'Core' (jsubsetaim é um bom proxy para alto impacto)
-    # Usando intervalo de datas explícito para maior robustez
-    try:
-        from datetime import timedelta
-        agora = datetime.now()
-        data_ini = (agora - timedelta(days=5*365)).strftime("%Y/%m/%d")
-        data_fim = agora.strftime("%Y/%m/%d")
-        date_term = f'("{data_ini}"[Date - Publication] : "{data_fim}"[Date - Publication])'
-    except:
-        date_term = "last 5 years[dp]"
+    # 1. Preparação (Keywords + JCR)
+    jcr_data = load_jcr_data()
+    keywords = generate_search_keywords(tema_ingles)
+    print(f"🎯 Keywords Obrigatórias (Relevância): {keywords}")
 
-    query_core = (
+    # 2. Busca Ampliada (30 artigos)
+    from datetime import timedelta
+    agora = datetime.now()
+    data_ini = (agora - timedelta(days=5*365)).strftime("%Y/%m/%d")
+    data_fim = agora.strftime("%Y/%m/%d")
+    date_term = f'("{data_ini}"[Date - Publication] : "{data_fim}"[Date - Publication])'
+
+    # Query tenta focar em alta evidência primeiro, mas permite Reviews
+    query = (
         f"({tema_ingles}) AND "
-        f"(Systematic Review[pt] OR Randomized Controlled Trial[pt]) AND "
-        f"jsubsetaim[text] AND "
+        f"(Systematic Review[pt] OR Randomized Controlled Trial[pt] OR Review[pt] OR Meta-Analysis[pt]) AND "
         f"{date_term}"
     )
     
+    candidates = []
     try:
-        handle = Entrez.esearch(db="pubmed", term=query_core, retmax=3, sort="relevance")
+        handle = Entrez.esearch(db="pubmed", term=query, retmax=40, sort="relevance")
         record = Entrez.read(handle)
         handle.close()
         ids = record["IdList"]
         
         if not ids:
-            print("⚠️ Nenhuma referência 'Core' encontrada. Tentando busca mais ampla...")
-            # Fallback 1: Sem jsubsetaim, mas ainda SR/RCT e 5 anos
-            query_fallback_1 = (
-                f"({tema_ingles}) AND "
-                f"(Systematic Review[pt] OR Randomized Controlled Trial[pt]) AND "
-                f"{date_term}"
-            )
-            handle = Entrez.esearch(db="pubmed", term=query_fallback_1, retmax=3, sort="relevance")
-            record = Entrez.read(handle)
-            handle.close()
-            ids = record["IdList"]
-
-        if not ids:
-            print("⚠️ Ainda sem referências. Tentando busca por Review geral...")
-            # Fallback 2: Review geral
-            query_fallback_2 = (
-                f"({tema_ingles}) AND (Review[pt]) AND {date_term}"
-            )
-            handle = Entrez.esearch(db="pubmed", term=query_fallback_2, retmax=3, sort="relevance")
-            record = Entrez.read(handle)
-            handle.close()
-            ids = record["IdList"]
-
-        if not ids:
-            return []
+             print("⚠️ Nenhuma referência encontrada na busca inicial.")
+             return []
 
         handle = Entrez.efetch(db="pubmed", id=ids, retmode="xml")
-        records = Entrez.read(handle)
+        papers = Entrez.read(handle)
         handle.close()
-        
-        referencias = []
-        for article in records['PubmedArticle']:
-            titulo = article['MedlineCitation']['Article']['ArticleTitle']
-            autores_list = article['MedlineCitation']['Article'].get('AuthorList', [])
-            primeiro_autor = f"{autores_list[0].get('LastName', '')} et al." if autores_list else "Autor desconhecido"
-            journal = article['MedlineCitation']['Article']['Journal']['Title']
-            ano = article['MedlineCitation']['Article']['Journal']['JournalIssue']['PubDate'].get('Year', 's/d')
-            pmid = article['MedlineCitation']['PMID']
-            link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-            
-            # Extração do Abstract
-            abstract_text = ""
-            if 'Abstract' in article['MedlineCitation']['Article']:
-                abstract_data = article['MedlineCitation']['Article']['Abstract'].get('AbstractText', [])
-                if isinstance(abstract_data, list):
-                    abstract_text = " ".join([str(item) for item in abstract_data])
-                else:
-                    abstract_text = str(abstract_data)
-            
-            referencias.append({
-                "texto": f"{primeiro_autor}. {titulo}. {journal}, {ano}.",
-                "link": link,
-                "resumo": abstract_text
-            })
-            
-        return referencias
+
+        # 3. Filtragem e Ranqueamento
+        if 'PubmedArticle' not in papers:
+            return []
+
+        for article in papers['PubmedArticle']:
+            try:
+                medline = article['MedlineCitation']['Article']
+                journal = medline.get('Journal', {}).get('Title', '').upper()
+                title = medline.get('ArticleTitle', '')
+                abstract_list = medline.get('Abstract', {}).get('AbstractText', [])
+                abstract = " ".join(abstract_list) if abstract_list else ""
+                
+                # A. Filtro de Relevância (Keywords)
+                # Se tiver keywords definidas, pelo menos UMA tem que estar no Titulo ou Abstract
+                text_content = (title + " " + abstract).lower()
+                if keywords:
+                    match = any(k in text_content for k in keywords)
+                    if not match:
+                        continue # Pula este artigo
+                
+                # B. Score JCR
+                jif = jcr_data.get(journal, 0.0)
+                if jif == 0.0 and journal.startswith("THE "):
+                     jif = jcr_data.get(journal[4:], 0.0)
+
+                # Extrai dados bibliográficos
+                autores = medline.get('AuthorList', [])
+                primeiro_autor = f"{autores[0]['LastName']} et al." if autores else "Autores diversos"
+                ano = medline.get('Journal', {}).get('JournalIssue', {}).get('PubDate', {}).get('Year', '')
+                if not ano:
+                    # Tenta extrair da data de publicação completa
+                    try:
+                        ano = article['PubmedData']['History'][0]['Year']
+                    except:
+                        ano = "s.d."
+                
+                pmid = article['MedlineCitation']['PMID']
+                link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+
+                candidates.append({
+                    "texto": f"{primeiro_autor}. {title}. {journal.title()}, {ano}.",
+                    "link": link,
+                    "resumo": abstract,
+                    "jif": jif,
+                    "journal": journal
+                })
+            except Exception as e:
+                continue
 
     except Exception as e:
-        print(f"⚠️ Erro ao buscar referências: {e}")
-        return []
+         print(f"❌ Erro na busca PubMed: {e}")
+         return []
+
+    # 4. Ordenação Final
+    # Prioridade: JIF (Decrescente) -> Se JIF == 0, fica no fim.
+    candidates.sort(key=lambda x: x['jif'], reverse=True)
+    
+    print(f"📊 {len(candidates)} artigos relevantes pós-filtro.")
+    for c in candidates[:5]:
+        print(f"   ⭐ [{c['jif']:.1f}] {c['journal']} - {c['texto'][:50]}...")
+        
+    return candidates[:5]
 
 def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename=None):
     """
