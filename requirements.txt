@@ -10,3 +10,4 @@ firebase-admin
 podgen
 google-generativeai
 Pillow
+requests
