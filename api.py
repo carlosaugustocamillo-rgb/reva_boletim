@@ -256,18 +256,31 @@ def iniciar_revamais(
     background_tasks: BackgroundTasks,
     input_data: CampanhaInput
 ):
-    task_id = str(uuid.uuid4())
-    
-    # Cria estado inicial
-    save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando Reva+ ..."], "result": None})
-    
-    background_tasks.add_task(processar_revamais_background, task_id, input_data.tema)
-    
-    return {
-        "task_id": task_id,
-        "status": "started",
-        "message": "Reva+ iniciado em background."
-    }
+    try:
+        task_id = str(uuid.uuid4())
+        
+        # Cria estado inicial
+        save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando Reva+ ..."], "result": None})
+        
+        background_tasks.add_task(processar_revamais_background, task_id, input_data.tema)
+        
+        return {
+            "task_id": task_id,
+            "status": "started",
+            "message": "Reva+ iniciado em background."
+        }
+    except Exception as e:
+        import traceback
+        print(f"❌ CRITICAL ERROR IN /iniciar-revamais: {e}\n{traceback.format_exc()}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error", 
+                "message": "Critical Server Error during initialization",
+                "error": str(e), 
+                "traceback": traceback.format_exc()
+            }
+        )
     
 @app.post("/cancelar-tarefa/{task_id}")
 def cancelar_tarefa_generica(task_id: str):
