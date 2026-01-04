@@ -271,6 +271,32 @@
         </button>
 
         <div id="statusReva" style="margin-top: 20px; padding: 10px; border-radius: 4px; display: none;"></div>
+
+        <hr style="margin: 40px 0; border: 0; border-top: 1px solid #eee;">
+
+        <h2 style="color: #25D366;">WhatsApp Drafts</h2> <!-- WhatsApp Green -->
+        <p>Gerencie e envie notificações geradas automaticamente.</p>
+
+        <button onclick="listarRascunhosWhatsapp()" style="background-color: #25D366; margin-bottom: 20px;">
+            🔄 Atualizar Rascunhos
+        </button>
+
+        <div id="listaDrafts" style="text-align: left;"></div>
+    </div>
+
+    <!-- Modal de Edição WhatsApp -->
+    <div id="whatsappModal" class="modal-overlay" onclick="hideWhatsappModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <h4 style="color: #25D366;">Editar Mensagem</h4>
+            <textarea id="editDraftText" rows="10"
+                style="width: 100%; padding: 10px; border-radius: 5px; border: 1px solid #ccc; font-family: sans-serif;"></textarea>
+            <input type="hidden" id="editDraftId">
+            <div style="margin-top: 15px; display: flex; justify-content: flex-end; gap: 10px;">
+                <button onclick="hideWhatsappModal()" style="background-color: #6c757d; width: auto;">Cancelar</button>
+                <button onclick="enviarRascunhoEditado()" style="background-color: #25D366; width: auto;">🚀 Enviar
+                    Agora</button>
+            </div>
+        </div>
     </div>
 
     <div id="debugModal" class="modal-overlay" onclick="hideDebugModal()">
@@ -282,6 +308,178 @@
     </div>
 
     <script>
+
+
+
+        function showWhatsappModal(draftId, currentText) {
+            document.getElementById('editDraftId').value = draftId;
+            document.getElementById('editDraftText').value = currentText;
+            document.getElementById('whatsappModal').style.display = 'flex';
+        }
+
+        let lastRevaMaisResult = null;
+
+        async function publicarNoticiaFromGlobal() {
+            if (!lastRevaMaisResult) {
+                alert("Nenhum resultado disponível para publicar.");
+                return;
+            }
+
+            const btn = document.getElementById('btnPublicarSite');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = "Publicando...";
+            }
+
+            const payload = {
+                titulo: lastRevaMaisResult.titulo || lastRevaMaisResult.tema,
+                html_content: lastRevaMaisResult.html_content,
+                data_publicacao: lastRevaMaisResult.data_publicacao,
+                imagem_capa: lastRevaMaisResult.url_capa || lastRevaMaisResult.url_ilustrativa,
+                resumo: "Noticia gerada via Reva+",
+                autor: "Revalidatie"
+            };
+
+            try {
+                const response = await fetch('/publicar-noticia', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.status === 'success') {
+                    alert('✅ Publicado com sucesso!\nID: ' + data.slug);
+                    if (btn) btn.innerHTML = "✅ Publicado";
+                } else {
+                    alert('❌ Erro: ' + data.message);
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = "🌍 Publicar no Site";
+                    }
+                }
+            } catch (error) {
+                console.error('Network Error:', error);
+                alert('Erro de conexão.');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = "🌍 Publicar no Site";
+                }
+            }
+        }
+
+        function hideWhatsappModal() {
+            document.getElementById('whatsappModal').style.display = 'none';
+        }
+
+        async function listarRascunhosWhatsapp() {
+            const div = document.getElementById('listaDrafts');
+            div.innerHTML = '<div class="spinner"></div><div class="loading">Carregando rascunhos...</div>';
+
+            try {
+                const res = await fetch('/whatsapp/drafts');
+                const drafts = await res.json();
+
+                if (drafts.error) {
+                    div.innerHTML = `<div class="error">Erro: ${drafts.error}</div>`;
+                    return;
+                }
+
+                if (drafts.length === 0) {
+                    div.innerHTML = '<p style="text-align: center;">Nenhum rascunho pendente.</p>';
+                    return;
+                }
+
+                let html = '';
+                drafts.forEach(d => {
+                    const dataCriacao = new Date(d.created_at).toLocaleString();
+                    const statusColor = d.status === 'SENT' ? '#d4edda' : '#fff3cd';
+                    const statusIcon = d.status === 'SENT' ? '✅ Enviado' : '⏳ Rascunho';
+
+                    html += `
+                        <div style="background: white; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.05);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <strong style="color: #333;">${d.source || 'Desconhecido'}</strong>
+                                <span style="background: ${statusColor}; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold;">${statusIcon}</span>
+                            </div>
+                            <div style="background: #e5ddd5; padding: 10px; border-radius: 5px; margin-bottom: 10px; white-space: pre-wrap; font-family: sans-serif; font-size: 0.9em;">${d.generated_text}</div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <small style="color: #999;">Gerado em: ${dataCriacao}</small>
+                                <div>
+                                    ${d.status !== 'SENT' ?
+                            `<button onclick="showWhatsappModal('${d.id}', \`${d.generated_text.replace(/`/g, '\\`')}\`)" style="width: auto; padding: 8px 15px; background-color: #25D366; font-size: 0.9em;">✏️ Revisar & Enviar</button>` :
+                            '<button disabled style="width: auto; padding: 8px 15px; opacity: 0.6; font-size: 0.9em;">Enviado</button>'
+                        }
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                div.innerHTML = html;
+
+            } catch (e) {
+                console.error(e);
+                div.innerHTML = `<div class="error">Erro de conexão: ${e.message}</div>`;
+            }
+        }
+
+        async function enviarRascunhoEditado() {
+            const draftId = document.getElementById('editDraftId').value;
+            const text = document.getElementById('editDraftText').value;
+            const btn = document.querySelector('#whatsappModal button[onclick="enviarRascunhoEditado()"]');
+
+            if (!confirm("Tem certeza que deseja enviar esta mensagem agora?")) return;
+
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = "Enviando...";
+
+            try {
+                // Pede o número apenas para teste (em produção seria fixo ou do cadastro)
+                // Como é um MVP, vou hardcodar o número de teste aqui ou pedir num prompt se quiser ser dinâmico.
+                // Vou usar o número que sabemos que funcionou nos testes: 5543991538121 ou o do usuário.
+                // MELHOR: Pedir no prompt para garantir.
+
+                let targetNumber = prompt("Para qual número enviar? (Apenas números, com DDI+DDD)", "5543991232699");
+                if (!targetNumber) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalText;
+                    return;
+                }
+
+                // Primeiro, garante que é Template se for necessário (mas a API /whatsapp/send que fizemos tenta enviar texto livre)
+                // Vamos tentar enviar. Se der erro de Policy, avisamos.
+
+                const res = await fetch('/whatsapp/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        draft_id: draftId,
+                        to_number: targetNumber,
+                        override_text: text
+                    })
+                });
+
+                const data = await res.json();
+
+                if (data.status === 'success') {
+                    alert("Mensagem enviada com sucesso! (ID: " + data.message_id + ")");
+                    hideWhatsappModal();
+                    listarRascunhosWhatsapp(); // Recarrega a lista
+                } else {
+                    alert("Erro ao enviar: " + (data.error || JSON.stringify(data)));
+                }
+
+            } catch (e) {
+                alert("Erro de comunicação: " + e.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+
         let currentTaskId = null;
         let pollInterval = null;
 
@@ -465,15 +663,15 @@
                     const sanitizedName = rawName.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
                     const fileName = sanitizedName.toLowerCase().endsWith('.mp3') ? sanitizedName : `${sanitizedName}.mp3`;
                     html += `
-                        <li style="margin-bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
-                            <div>
-                                <strong>${ep.nome}</strong><br>
+                    <li style="margin-bottom: 10px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 5px; display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>${ep.nome}</strong><br>
                                 <small style="color: #666;">${new Date(ep.data).toLocaleString()} - ${ep.tamanho}</small>
-                            </div>
-                            <button onclick="forceDownload('${ep.url}', '${fileName}')" style="background: #28a745; color: white; border:none; cursor:pointer; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; font-weight:bold;">
-                                ⬇️ Baixar
-                            </button>
-                        </li>
+                        </div>
+                        <button onclick="forceDownload('${ep.url}', '${fileName}')" style="background: #28a745; color: white; border:none; cursor:pointer; padding: 5px 10px; border-radius: 4px; font-size: 0.9em; font-weight:bold;">
+                            ⬇️ Baixar
+                        </button>
+                    </li>
                     `;
                 });
                 html += '</ul>';
@@ -540,24 +738,24 @@
                             if (data.result && data.result.audio_url) {
                                 const downloadUrl = data.result.audio_url;
                                 const downloadBtn = `
-                                    <div style="margin-top: 15px; text-align: center;">
-                                        <button onclick="forceDownload('${downloadUrl}', 'episodio_novo.mp3')" style="background-color: #4CAF50; color: white; padding: 10px 20px; border:none; cursor:pointer; border-radius: 5px; font-weight: bold; font-size: 16px;">
-                                            ⬇️ Baixar MP3 do Episódio
-                                        </button>
-                                    </div>
-                                `;
+                    <div style="margin-top: 15px; text-align: center;">
+                        <button onclick="forceDownload('${downloadUrl}', 'episodio_novo.mp3')" style="background-color: #4CAF50; color: white; padding: 10px 20px; border:none; cursor:pointer; border-radius: 5px; font-weight: bold; font-size: 16px;">
+                            ⬇️ Baixar MP3 do Episódio
+                        </button>
+                    </div>
+                    `;
                                 logDiv.innerHTML += downloadBtn;
                             }
 
                             if (data.result && data.result.custos) {
                                 const custos = data.result.custos;
                                 logDiv.innerHTML += `
-                                    <div style="margin-top: 15px; padding: 10px; background: #e8f5e9; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724;">
-                                        <strong>💰 Custo Estimado desta Execução:</strong><br>
-                                        Custo Total: <strong>R$ ${custos.estimativa_brl}</strong> (aprox. $${custos.estimativa_usd})<br>
-                                        <small>${custos.detalhe}</small>
-                                    </div>
-                                `;
+                    <div style="margin-top: 15px; padding: 10px; background: #e8f5e9; border: 1px solid #c3e6cb; border-radius: 5px; color: #155724;">
+                        <strong>💰 Custo Estimado desta Execução:</strong><br>
+                            Custo Total: <strong>R$ ${custos.estimativa_brl}</strong> (aprox. $${custos.estimativa_usd})<br>
+                                <small>${custos.detalhe}</small>
+                            </div>
+                            `;
                                 logDiv.scrollTop = logDiv.scrollHeight;
                             }
                         } else if (data.status === 'canceled') {
@@ -609,11 +807,11 @@
                     statusDiv.className = 'success';
                     const result = data.resultado;
                     statusDiv.innerHTML = `
-                        ✅ <strong>Campanha Criada!</strong><br>
-                        <a href="${result.image}" target="_blank">Ver Imagem Gerada</a><br>
-                        ID Mailchimp: ${result.campaign_id}<br>
-                        <small>Verifique o rascunho no Mailchimp.</small>
-                    `;
+                                    ✅ <strong>Campanha Criada!</strong><br>
+                                        <a href="${result.image}" target="_blank">Ver Imagem Gerada</a><br>
+                                            ID Mailchimp: ${result.campaign_id}<br>
+                                                <small>Verifique o rascunho no Mailchimp.</small>
+                                                `;
                 } else {
                     throw new Error(data.erro || 'Erro desconhecido');
                 }
@@ -685,14 +883,24 @@
                         instaHtml += `</div>`;
                     }
 
+
+                    // Atualiza estado global para publicação
+                    lastRevaMaisResult = res;
+
                     statusDiv.innerHTML = `
-                        ✅ <strong>Sucesso!</strong><br>
-                        Tema: <b>${res.tema || tema}</b><br>
-                        Mailchimp ID: ${res.campaign_id}<br>
-                        Custo Estimado: R$ ${res.custo_estimado.brl.toFixed(2)}<br>
-                        <hr>
-                        ${instaHtml}
-                    `;
+                                                ✅ <strong>Sucesso!</strong><br>
+                                                    Tema: <b>${res.tema || tema}</b><br>
+                                                        Mailchimp ID: ${res.campaign_id}<br>
+                                                            Custo Estimado: R$ ${res.custo_estimado.brl.toFixed(2)}<br>
+                                                            <div style="margin-top: 15px; padding: 10px; background-color: #e3f2fd; border-radius: 8px;">
+                                                                <button id="btnPublicarSite" onclick="publicarNoticiaFromGlobal()" style="background-color: #007bff; width: auto; font-size: 0.9em;">
+                                                                    🌍 Publicar no Site
+                                                                </button>
+                                                                <small style="display:block; margin-top:5px; color:#555;">Data: ${res.data_publicacao}</small>
+                                                            </div>
+                                                                <hr>
+                                                                    ${instaHtml}
+                                                                    `;
                 } else {
                     throw new Error(data.erro || 'Erro desconhecido');
                 }

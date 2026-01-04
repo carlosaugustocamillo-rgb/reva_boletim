@@ -1339,6 +1339,30 @@ def rodar_boletim(opcoes=None):
 
 
 
+
+    # ------------------------------------------------------------------
+    # 5.5) INTEGRAÇÃO WHATSAPP (NOVO)
+    # ------------------------------------------------------------------
+    if opcoes.get('firebase'):
+         try:
+            from whatsapp_service import create_draft
+            yield "📱 Gerando rascunho WhatsApp (Weekly)..."
+            
+            # Link prioritário: RSS > Audio > Site
+            link_final = rss_url if rss_url else (audio_url if audio_url else "https://www.revalidatie.com.br")
+            
+            wa_content = {
+                "title": f"RevaCast Weekly - {hoje}",
+                "summary": f"Novo episódio no ar! Confira os destaques da semana em {link_final}",
+                "link": link_final
+            }
+            
+            draft = create_draft("revacast_weekly", wa_content)
+            if draft:
+                 yield f"✅ Rascunho WhatsApp criado com sucesso!"
+         except Exception as e_wa:
+             yield f"⚠️ Erro ao gerar rascunho WhatsApp: {e_wa}"
+
     # ------------------------------------------------------------------
     # 6) RETORNO
     # ------------------------------------------------------------------

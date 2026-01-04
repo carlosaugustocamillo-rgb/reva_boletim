@@ -50,6 +50,28 @@ def save_firestore_document(collection, doc_id, data):
         print(f"❌ Erro ao salvar no Firestore: {e}")
         return False
 
+def update_firestore_document(collection, doc_id, data):
+    """Atualiza parcialmente um documento no Firestore (merge)."""
+    if not firebase_admin._apps:
+        print("❌ Firebase não inicializado.")
+        return False
+        
+    try:
+        db = firestore.client()
+        doc_ref = db.collection(collection).document(doc_id)
+        doc_ref.update(data)
+        print(f"✅ Documento atualizado no Firestore: {collection}/{doc_id}")
+        return True
+    except Exception as e:
+        print(f"❌ Erro ao atualizar no Firestore: {e}")
+        return False
+
+def get_firestore_db():
+    """Retorna o cliente do Firestore diretamente, se necessário."""
+    if not firebase_admin._apps: return None
+    return firestore.client()
+
+
 def upload_file(local_path, destination_blob_name):
     """Faz upload de um arquivo para o Firebase Storage e retorna a URL pública."""
     if not firebase_admin._apps:

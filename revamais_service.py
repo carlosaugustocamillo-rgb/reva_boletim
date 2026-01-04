@@ -497,9 +497,18 @@ def obter_proximo_tema_csv():
     formato_escolhido = "Carrossel"
     idx_atual = 0
     
+    # Normalização para comparação (Remove espaços extras e case insensitive)
+    def normalize(text):
+        return str(text).strip().lower()
+
+    used_titles_normalized = {normalize(t) for t in used_titles}
+    print(f"📊 Estado Carregado: {len(used_titles)} temas já utilizados.")
+    
     for i, row in enumerate(rows):
         titulo = row.get('Title', row.get('Theme', '')).strip()
-        if titulo and titulo not in used_titles:
+        titulo_norm = normalize(titulo)
+        
+        if titulo and titulo_norm not in used_titles_normalized:
             tema_escolhido = titulo
             formato_escolhido = row.get('Format', 'Carrossel')
             idx_atual = i + 1
@@ -514,12 +523,22 @@ def obter_proximo_tema_csv():
         state_data["last_updated"] = datetime.now().isoformat()
         
         # Cria arquivo local temporário para upload
-        with NamedTemporaryFile(mode='w', delete=False, suffix='.json') as tmp:
-            json.dump(state_data, tmp)
-            tmp_path = tmp.name
-            
         try:
-            upload_file(tmp_path, state_file)
+            # Usa prefixo para facilitar debug
+            with NamedTemporaryFile(mode='w', delete=False, suffix='.json', prefix='state_update_') as tmp:
+                json.dump(state_data, tmp)
+                tmp_path = tmp.name
+                
+            print(f"💾 Tentando salvar estado atualizado ({len(used_titles)} itens) no Firebase...")
+            url_state = upload_file(tmp_path, state_file)
+            
+            if url_state:
+                print("✅ Estado atualizado com sucesso no Firebase.")
+            else:
+                print("⚠️ FALHA SILENCIOSA ao salvar estado (upload_file retornou None). O tema vai repetir!")
+                
+        except Exception as e_save:
+            print(f"❌ ERRO EXCEÇÃO ao salvar estado: {e_save}")
         finally:
              if os.path.exists(tmp_path): os.remove(tmp_path)
              
@@ -819,9 +838,41 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context, conteudo_base=html_texto)
     
     check()
-    # 5. Montar HTML Final
+
+    check()
+    # 5. Calculo de Data de Entrega (Para Header e Agendamento)
+    log("📅 Calculando data de entrega do Reva+...")
     
-    today_formatted = datetime.now().strftime('%d/%m/%Y')
+    target_weekday = 1 if is_calendar_source else 6 # 1=Terça (Auto), 6=Domingo (Manual)
+    
+    # Cálculo do próximo dia alvo
+    now_utc = datetime.utcnow()
+    days_until = (target_weekday - now_utc.weekday()) % 7
+    
+    # Se for hoje e já passou das 15:00 UTC (12:00 BRT), ou é muito próximo, agendar para a próxima semana
+    if days_until == 0 and now_utc.hour >= 14: # Margem de segurança de 1h
+        days_until = 7
+    
+    next_date = now_utc + timedelta(days=days_until)
+    # Define 10:30 UTC (07:30 BRT)
+    schedule_time = next_date.replace(hour=10, minute=30, second=0, microsecond=0)
+    
+    # Garante que seja no futuro (Mailchimp exige pelo menos 15 min de antecedência)
+    if schedule_time < (datetime.utcnow() + timedelta(minutes=15)):
+            schedule_time += timedelta(weeks=1) # Se ficou muito perto, joga pra semana que vem
+    
+    # Formato ISO 8601 UTC para Mailchimp
+    schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+    
+    # Formato visual para o Email (Ex: 30/12/2025)
+    # Importante: O agendamento é UTC, mas o "dia" visual deve ser o do Brasil/Entrega.
+    # Como 10:30 UTC é 07:30 BRT, o dia é o mesmo.
+    delivery_date_formatted = schedule_time.strftime('%d/%m/%Y')
+    
+    log(f"🗓️ Data Calculada: {delivery_date_formatted} (Agendamento: {schedule_str})")
+
+    check()
+    # 6. Montar HTML Final (Agora com a data correta)
     
     html_email = f"""
     <!DOCTYPE html>
@@ -848,7 +899,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             
             <div class="header-intro">
                 <p><strong>Olá, *|FNAME|*!</strong><br>
-                Aqui está sua atualização semanal de saúde do Reva + para {today_formatted}.</p>
+                Aqui está sua atualização semanal de saúde do Reva + para {delivery_date_formatted}.</p>
             </div>
             
             <div style="padding: 20px;">
@@ -885,7 +936,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     """
     
     check()
-    # 6. Mailchimp
+    # 7. Mailchimp
     try:
         log("📧 Enviando rascunho para o Mailchimp...")
         campaign = mc.campaigns.create({
@@ -901,31 +952,10 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
         mc.campaigns.set_content(campaign["id"], {"html": html_email})
         log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
         
-        # 7. Agendamento Automático
+        # 8. Agendamento Automático
         try:
-            target_weekday = 1 if is_calendar_source else 6 # 1=Terça (Auto), 6=Domingo (Manual)
             day_name = "Terça-feira" if is_calendar_source else "Domingo"
-            
-            log(f"📅 Tentando agendar envio para próximo(a) {day_name} (12:00 BRT)...")
-            
-            # Cálculo do próximo dia alvo
-            now_utc = datetime.utcnow()
-            days_until = (target_weekday - now_utc.weekday()) % 7
-            
-            # Se for hoje e já passou das 15:00 UTC (12:00 BRT), ou é muito próximo, agendar para a próxima semana
-            if days_until == 0 and now_utc.hour >= 14: # Margem de segurança de 1h
-                days_until = 7
-            
-            next_date = now_utc + timedelta(days=days_until)
-            # Define 10:30 UTC (07:30 BRT)
-            schedule_time = next_date.replace(hour=10, minute=30, second=0, microsecond=0)
-            
-            # Garante que seja no futuro (Mailchimp exige pelo menos 15 min de antecedência)
-            if schedule_time < (datetime.utcnow() + timedelta(minutes=15)):
-                 schedule_time += timedelta(weeks=1) # Se ficou muito perto, joga pra semana que vem
-            
-            # Formato ISO 8601 UTC
-            schedule_str = schedule_time.strftime('%Y-%m-%dT%H:%M:%S+00:00')
+            log(f"📅 Tentando agendar envio para próximo(a) {day_name}...")
             
             mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
             log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC) [07:30 BRT]")
@@ -934,6 +964,37 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             # Muitos planos gratuitos não permitem agendamento via API
             log(f"⚠️ Falha no agendamento automático (Provável limitação do Plano Free ou Data): {e}")
             log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende manualmente.")
+
+        # 9. Integração WhatsApp (Novo)
+        try:
+            from whatsapp_service import create_draft
+            import re
+            
+            def slugify(text):
+                text = text.lower().strip()
+                text = re.sub(r'[^\w\s-]', '', text)
+                text = re.sub(r'[\s_-]+', '-', text)
+                return text
+
+            # Gera link provável (assumindo que será publicado)
+            slug = slugify(tema)
+            # data short: 20251230
+            date_short = datetime.now().strftime('%Y%m%d')
+            probable_link = f"https://www.revalidatie.com.br/news/{slug}-{date_short}"
+            
+            log("📱 Gerando rascunho para WhatsApp...")
+            wa_content = {
+                "title": tema,
+                "summary": f"Confira a nova edição do Reva+ sobre {tema}.",
+                "link": probable_link
+            }
+            draft = create_draft("revamais", wa_content)
+            if draft:
+                log(f"✅ Rascunho WhatsApp criado com sucesso!")
+        except Exception as e_wa:
+             log(f"⚠️ Erro ao gerar rascunho WhatsApp: {e_wa}")
+
+
 
         # Custo Dinâmico (Simulado para parecer real)
         import random
@@ -949,7 +1010,13 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             "url_corpo": url_corpo,
             "custo_estimado": custo_real,
             "instagram_assets": instagram_assets,
-            "instagram_format": formato_instagram
+            "instagram_format": formato_instagram,
+            # Campos para Publicação no Site (Novos)
+            "titulo": tema,
+            "html_content": html_texto, # Conteúdo interno (puro) para Blog
+            "html_full": html_email,    # Email completo (para histórico/preview)
+            "data_publicacao": delivery_date_formatted,
+            "data_iso": schedule_str
         }
     except Exception as e:
         log(f"❌ Erro Mailchimp: {e}")

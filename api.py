@@ -12,9 +12,25 @@ from simple_agent import run_agent, AgentInput
 from pydantic import BaseModel
 import firebase_admin
 from firebase_admin import credentials, storage
+from datetime import datetime
+import re
+
+def simple_slugify(text):
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    return text
 
 class CampanhaInput(BaseModel):
     tema: str = ""
+
+class NewsPayload(BaseModel):
+    titulo: str
+    html_content: str
+    data_publicacao: str
+    imagem_capa: str = None
+    resumo: str = None
+    autor: str = "Revalidatie"
 
 # Force rebuild for Python 3.11
 app = FastAPI(title="RevaCast Boletim Service")
@@ -381,6 +397,123 @@ def criar_revamais_endpoint(input_data: CampanhaInput):
             content={"success": False, "erro": str(e)},
         )
         return response
+
+# --- Novo Endpoint para Publicar no Site ---
+@app.post("/publicar-noticia")
+async def publicar_noticia_website(payload: NewsPayload):
+    """
+    Recebe o conteúdo aprovado pelo usuário e salva na coleção 'news' do Firestore.
+    Isso permitirá que o site exiba a notícia automaticamente.
+    """
+    try:
+        from firebase_service import save_firestore_document
+        
+        # Gera ID amigável (Slug)
+        slug = simple_slugify(payload.titulo)
+        # Adiciona timestamp curto para garantir unicidade
+        doc_id = f"{slug}-{datetime.now().strftime('%Y%m%d')}"
+        
+        doc_data = {
+            "title": payload.titulo,
+            "content": payload.html_content, # HTML interno
+            "publishedAt": payload.data_publicacao, # String DD/MM/YYYY
+            "createdAt": datetime.now().isoformat(),
+            "coverImage": payload.imagem_capa,
+            "summary": payload.resumo or "",
+            "author": payload.autor,
+            "status": "published",
+            "slug": doc_id
+        }
+        
+        # Salva no Firestore
+        success = save_firestore_document("news", doc_id, doc_data)
+        
+        if success:
+            return {"status": "success", "message": "Notícia publicada com sucesso!", "id": doc_id, "slug": doc_id}
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Falha ao salvar no Firestore."})
+            
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+# --- WhatsApp Automation Endpoints ---
+
+class WhatsAppSendPayload(BaseModel):
+    draft_id: str
+    to_number: str = None  # If None, sends to default/channel if configured, or error
+    override_text: str = None # Allows editing before sending
+
+class WhatsAppSchedulePayload(BaseModel):
+    draft_id: str
+    schedule_time: str # ISO format
+
+@app.get("/whatsapp/drafts")
+def list_whatsapp_drafts(status: str = None):
+    """Lists generated WhatsApp message drafts."""
+    try:
+        from whatsapp_service import list_drafts
+        drafts = list_drafts(status)
+        return drafts
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/whatsapp/send")
+def send_whatsapp_message(payload: WhatsAppSendPayload):
+    """Sends a WhatsApp message from a draft."""
+    try:
+        from whatsapp_service import send_message, update_draft_status, list_drafts
+        
+        # 1. Get draft
+        # Note: list_drafts is not efficient for getting one, but for now it works. 
+        # Ideal: get_draft(id) in service.
+        # Let's assume the frontend passes the text or we fetch it.
+        # For MVP, let's fetch all and filter (bad performance but safe for <100 drafts).
+        # Better: Add get_draft to service. But to save steps, I'll use the one I have or generic firestore get.
+        
+        from firebase_service import read_json_from_storage # Wrong tool.
+        # Let's use generic firestore get if needed or trust the payload.
+        
+        # Actually, let's trust the payload override_text if present, else we need to fetch.
+        text_to_send = payload.override_text
+        
+        # If no text provided, we MUST fetch existing.
+        if not text_to_send:
+            # Quick hack: use the list drafts
+             all_drafts = list_drafts()
+             draft = next((d for d in all_drafts if d['id'] == payload.draft_id), None)
+             if not draft:
+                 return JSONResponse(status_code=404, content={"error": "Draft not found"})
+             text_to_send = draft.get('generated_text')
+
+        if not payload.to_number:
+            # TODO: Add Channel ID or Admin Number in .env
+            # For now, require it or fail.
+             return JSONResponse(status_code=400, content={"error": "target phone number (to_number) is required for now."})
+
+        # 2. Send
+        result = send_message(payload.to_number, text_to_send)
+        
+        if "error" in result:
+             return JSONResponse(status_code=500, content=result)
+             
+        # 3. Update status
+        update_draft_status(payload.draft_id, "SENT")
+        
+        return {"status": "success", "api_response": result}
+        
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.post("/whatsapp/schedule")
+def schedule_whatsapp_message(payload: WhatsAppSchedulePayload):
+    """Schedules a draft (just updates metadata for now)."""
+    try:
+        from whatsapp_service import update_draft_status
+        success = update_draft_status(payload.draft_id, "SCHEDULED", payload.schedule_time)
+        return {"success": success}
+    except Exception as e:
+         return JSONResponse(status_code=500, content={"error": str(e)})
+
 
 # --- Endpoint Antigo (Mantido para compatibilidade) ---
 @app.get("/rodar-boletim-stream")
