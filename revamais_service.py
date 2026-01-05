@@ -753,19 +753,8 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
 def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram=True, enviar_email=True, log_callback=None, check_cancel=None):
     """
     Cria campanha Reva+ com suporte a logs e cancelamento.
-    log_callback: função(str) para enviar logs.
-    check_cancel: função() -> bool que retorna True se deve cancelar.
     Orquestra o processo completo do Reva +.
-    
-    Args:
-        tema_usuario (str, optional): Tema manual. Se None, usa o calendário.
-        gerar_midia (bool): Se deve gerar imagens (DALL-E). Default True.
-        gerar_instagram (bool): Se deve gerar assets para Instagram. Default True.
-        enviar_email (bool): Se deve criar rascunho no Mailchimp. Default True.
     """
-    log("🚀 Iniciando pipeline do Reva +...")
-    # Identifica fonte do tema para agendamento
-    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
     
     def log(msg):
         print(msg) # Mantém print no stdout
@@ -774,6 +763,11 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     def check():
         if check_cancel and check_cancel():
             raise Exception("CANCELADO_PELO_USUARIO")
+
+    log("🚀 Iniciando pipeline do Reva +...")
+    
+    # Identifica fonte do tema para agendamento
+    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
 
     formato_instagram = "Carrossel" # Default
     tema = tema_usuario # Inicializa tema com o valor do usuário
@@ -787,6 +781,9 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
             return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
         tema = dados_csv['tema']
         formato_instagram = dados_csv.get('formato', 'Carrossel')
+            
+    # Remove duplicidade de log se já foi logado pelo wrapper, mas mal não faz
+    log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
             
     log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
