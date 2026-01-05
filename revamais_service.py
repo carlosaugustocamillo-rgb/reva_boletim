@@ -1039,9 +1039,7 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
             "data_publicacao": delivery_date_formatted,
             "data_iso": schedule_str
         }
-    except Exception as e:
-        log(f"❌ Erro Mailchimp: {e}")
-        return {"status": "error", "message": str(e)}
+
 
 if __name__ == "__main__":
     # Teste rápido
