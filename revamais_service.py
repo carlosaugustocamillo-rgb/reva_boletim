@@ -983,59 +983,59 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     else:
         log("⏩ Pulando envio para Mailchimp (opção desmarcada).")
 
-        # 9. Integração WhatsApp (Novo)
-        try:
-            from whatsapp_service import create_draft
-            import re
-            
-            def slugify(text):
-                text = text.lower().strip()
-                text = re.sub(r'[^\w\s-]', '', text)
-                text = re.sub(r'[\s_-]+', '-', text)
-                return text
+    # 9. Integração WhatsApp (Novo)
+    try:
+        from whatsapp_service import create_draft
+        import re
+        
+        def slugify(text):
+            text = text.lower().strip()
+            text = re.sub(r'[^\w\s-]', '', text)
+            text = re.sub(r'[\s_-]+', '-', text)
+            return text
 
-            # Gera link provável (assumindo que será publicado)
-            slug = slugify(tema)
-            # data short: 20251230
-            date_short = datetime.now().strftime('%Y%m%d')
-            probable_link = f"https://www.revalidatie.com.br/news/{slug}-{date_short}"
-            
-            log("📱 Gerando rascunho para WhatsApp...")
-            wa_content = {
-                "title": tema,
-                "summary": f"Confira a nova edição do Reva+ sobre {tema}.",
-                "link": probable_link
-            }
-            draft = create_draft("revamais", wa_content)
-            if draft:
-                log(f"✅ Rascunho WhatsApp criado com sucesso!")
-        except Exception as e_wa:
-             log(f"⚠️ Erro ao gerar rascunho WhatsApp: {e_wa}")
-
-
-
-        # Custo Dinâmico (Simulado para parecer real)
-        import random
-        custo_real = estimar_custo_revamais()
-        custo_real['brl'] = custo_real['brl'] * random.uniform(0.9, 1.1)
-        custo_real['usd'] = custo_real['usd'] * random.uniform(0.9, 1.1)
-
-        return {
-            "status": "success", 
-            "campaign_id": campaign['id'], 
-            "url_capa": url_capa_estatica,
-            "url_ilustrativa": url_ilustrativa,
-            "url_corpo": url_corpo,
-            "custo_estimado": custo_real,
-            "instagram_assets": instagram_assets,
-            "instagram_format": formato_instagram,
-            # Campos para Publicação no Site (Novos)
-            "titulo": tema,
-            "html_content": html_texto, # Conteúdo interno (puro) para Blog
-            "html_full": html_email,    # Email completo (para histórico/preview)
-            "data_publicacao": delivery_date_formatted,
-            "data_iso": schedule_str
+        # Gera link provável (assumindo que será publicado)
+        slug = slugify(tema)
+        # data short: 20251230
+        date_short = datetime.now().strftime('%Y%m%d')
+        probable_link = f"https://www.revalidatie.com.br/news/{slug}-{date_short}"
+        
+        log("📱 Gerando rascunho para WhatsApp...")
+        wa_content = {
+            "title": tema,
+            "summary": f"Confira a nova edição do Reva+ sobre {tema}.",
+            "link": probable_link
         }
+        draft = create_draft("revamais", wa_content)
+        if draft:
+            log(f"✅ Rascunho WhatsApp criado com sucesso!")
+    except Exception as e_wa:
+         log(f"⚠️ Erro ao gerar rascunho WhatsApp: {e_wa}")
+
+
+
+    # Custo Dinâmico (Simulado para parecer real)
+    import random
+    custo_real = estimar_custo_revamais()
+    custo_real['brl'] = custo_real['brl'] * random.uniform(0.9, 1.1)
+    custo_real['usd'] = custo_real['usd'] * random.uniform(0.9, 1.1)
+
+    return {
+        "status": "success", 
+        "campaign_id": campaign['id'], 
+        "url_capa": url_capa_estatica,
+        "url_ilustrativa": url_ilustrativa,
+        "url_corpo": url_corpo,
+        "custo_estimado": custo_real,
+        "instagram_assets": instagram_assets,
+        "instagram_format": formato_instagram,
+        # Campos para Publicação no Site (Novos)
+        "titulo": tema,
+        "html_content": html_texto, # Conteúdo interno (puro) para Blog
+        "html_full": html_email,    # Email completo (para histórico/preview)
+        "data_publicacao": delivery_date_formatted,
+        "data_iso": schedule_str
+    }
 
 
 if __name__ == "__main__":
