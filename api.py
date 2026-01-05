@@ -143,12 +143,6 @@ def update_task_status(task_id, status, log_msg=None):
     save_task(task_id, state)
 
 def processar_revamais_background(task_id: str, opcoes: dict):
-    """Função wrapper para Reva+ em background."""
-    task_state = {"status": "running", "logs": [], "result": None}
-    save_task(task_id, task_state)
-    
-    def log_callback(msg):
-def processar_revamais_background(task_id: str, opcoes: dict):
     """Função wrapper que roda o Reva+ e salva logs em arquivo. Agora com suporte a flags."""
     log_callback = make_log_callback(task_id)
     check_cancel = make_check_cancel(task_id)
@@ -174,18 +168,23 @@ def processar_revamais_background(task_id: str, opcoes: dict):
             check_cancel=check_cancel
         )
 
-        
         # Se retornou sucesso/erro (dict)
         if isinstance(resultado, dict):
             if resultado.get("status") == "error":
+                task_state = load_task(task_id) or {"logs": []} # reload state
+                task_state["status"] = "error"
+                task_state["result"] = resultado
+                save_task(task_id, task_state)
             else:
+                task_state = load_task(task_id) or {"logs": []}
                 task_state["status"] = "completed"
-            task_state["result"] = resultado
-            task_state["logs"].append("✅ Processo Reva+ finalizado.")
+                task_state["result"] = resultado
+                task_state["logs"].append("✅ Processo Reva+ finalizado.")
+                save_task(task_id, task_state)
         else:
+            task_state = load_task(task_id) or {"logs": []}
             task_state["status"] = "completed"
-            
-        save_task(task_id, task_state)
+            save_task(task_id, task_state)
         
     except Exception as e:
         if str(e) == "CANCELADO_PELO_USUARIO":
@@ -193,6 +192,7 @@ def processar_revamais_background(task_id: str, opcoes: dict):
              
         import traceback
         error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
+        task_state = load_task(task_id) or {"logs": []}
         task_state["status"] = "error"
         task_state["logs"].append(error_msg)
         save_task(task_id, task_state)
