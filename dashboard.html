@@ -266,6 +266,20 @@
                 style="width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box; font-size: 16px;">
         </div>
 
+        <div class="options-container"
+            style="text-align: left; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef;">
+            <strong style="display:block; margin-bottom:10px; color:#6f42c1;">O que gerar?</strong>
+            <label style="display: inline-block; margin-right: 15px; cursor: pointer;">
+                <input type="checkbox" id="revamais_img" checked> 🖼️ Imagens (DALL-E)
+            </label>
+            <label style="display: inline-block; margin-right: 15px; cursor: pointer;">
+                <input type="checkbox" id="revamais_insta" checked> 📸 Instagram
+            </label>
+            <label style="display: inline-block; cursor: pointer;">
+                <input type="checkbox" id="revamais_email" checked> 📧 Email (Mailchimp)
+            </label>
+        </div>
+
         <button id="btnReva" onclick="criarRevaMais()" style="background-color: #6f42c1;">
             📸 Criar Reva +
         </button>
@@ -831,18 +845,28 @@
             const temaInput = document.getElementById('temaReva');
             const tema = temaInput.value.trim(); // Pode ser vazio
 
+            // Opções
+            const gerar_midia = document.getElementById('revamais_img').checked;
+            const gerar_instagram = document.getElementById('revamais_insta').checked;
+            const enviar_email = document.getElementById('revamais_email').checked;
+
             // Estado de carregamento
             btn.disabled = true;
             btn.innerHTML = 'Gerando... (Café? ☕)';
             statusDiv.style.display = 'block';
             statusDiv.className = '';
-            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Deep Research + Mailchimp + Instagram Assets...</div>';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Iniciando processo...</div>';
 
             try {
                 const response = await fetch('/criar-revamais', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ tema: tema })
+                    body: JSON.stringify({
+                        tema: tema,
+                        gerar_midia: gerar_midia,
+                        gerar_instagram: gerar_instagram,
+                        enviar_email: enviar_email
+                    })
                 });
 
                 const data = await response.json();

@@ -426,7 +426,9 @@ def gerar_conteudo_revamais(tema, referencias):
     {chr(10).join([ f'Artigo {i+1}: {r["texto"]}{chr(10)}Resumo: {r["resumo"]}{chr(10)}' for i, r in enumerate(referencias) ])}
     -----------------------------------------------------------------
     
-    Estrutura HTML (retorne APENAS o conteúdo dentro do body e APENAS HTML):
+    Estrutura HTML (retorne APENAS o conteúdo dentro do body e APENAS HTML PURO):
+    IMPORTANTE: NÃO USE MARKDOWN (```html ... ```). Retorne APENAS o código HTML cru.
+    
     1. <h1>Título Atraente e Emocional</h1>
     2. <p>Introdução empática + Explicação do Mecanismo (Por que dói? Por que melhora? - Use conhecimento geral de fisiologia).</p>
     3. <h2>O que a Ciência Comprova?</h2> (Aqui você insere a "tradução" dos abstracts acima, conectando com a explicação).
@@ -448,7 +450,7 @@ def gerar_conteudo_revamais(tema, referencias):
         )
         html_content = response.choices[0].message.content
 
-    # Limpeza de Markdown e Tags de Estrutura (<html>, <body>) que quebram o layout
+    # Limpeza de Markdown
     html_content = html_content.replace("```html", "").replace("```", "")
     
     # Remover tags estruturais se a IA teimosamente as incluir
@@ -748,14 +750,22 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
         
     return assets
 
-def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
+def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram=True, enviar_email=True, log_callback=None, check_cancel=None):
     """
     Cria campanha Reva+ com suporte a logs e cancelamento.
     log_callback: função(str) para enviar logs.
     check_cancel: função() -> bool que retorna True se deve cancelar.
+    Orquestra o processo completo do Reva +.
+    
+    Args:
+        tema_usuario (str, optional): Tema manual. Se None, usa o calendário.
+        gerar_midia (bool): Se deve gerar imagens (DALL-E). Default True.
+        gerar_instagram (bool): Se deve gerar assets para Instagram. Default True.
+        enviar_email (bool): Se deve criar rascunho no Mailchimp. Default True.
     """
+    log("🚀 Iniciando pipeline do Reva +...")
     # Identifica fonte do tema para agendamento
-    is_calendar_source = not tema or tema.strip() == ""
+    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
     
     def log(msg):
         print(msg) # Mantém print no stdout
@@ -766,6 +776,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
             raise Exception("CANCELADO_PELO_USUARIO")
 
     formato_instagram = "Carrossel" # Default
+    tema = tema_usuario # Inicializa tema com o valor do usuário
 
     check()
     # Se não veio tema, tenta pegar do CSV
@@ -780,7 +791,7 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
     check()
-    # 1. Traduzir tema para busca
+    # 1. Traduzir tema para keywords científicas
     try:
         log("🌍 Traduzindo tema para keywords científicas...")
         model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
@@ -803,27 +814,24 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     
     check()
     # 3. Gerar Imagens
-    log("🎨 Gerando assets visuais (isso pode demorar)...")
-    
-    # Gerar Banner Composto (Header)
-    try:
-        log("🖼️ Criando banner de cabeçalho personalizado...")
-        # This section is removed as per instruction.
-    except Exception as e:
-        log(f"⚠️ Falha ao criar banner composto: {e}. Usando logo padrão.")
-    
-    # Capa: Estática (solicitada pelo usuário)
     url_capa_estatica = "https://i.imgur.com/oGzxgtK.jpeg"
-    
-    # 1. Imagem Ilustrativa (Lifestyle/Visual)
-    # Ex: Pessoa na esteira, feliz, etc. Sem texto.
-    prompt_ilustrativa = f"A high quality, photorealistic or cinematic style photo-illustration about '{tema_ingles}'. Showing people, lifestyle, or the subject in a natural, positive way. NO TEXT. Suitable for a newsletter cover."
-    url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
+    url_ilustrativa = "https://placehold.co/600x400?text=Imagem+Ilustrativa" # Placeholder default
+    url_corpo = "https://placehold.co/600x400?text=Infografico" # Placeholder default
 
-    # 2. Imagem Corpo (Infográfico/Educativo)
-    # Se tiver texto, DEVE SER EM PORTUGUÊS
-    prompt_corpo = f"An educational infographic or diagram about '{tema_ingles}'. Clean lines, easy to understand, white background. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). If you cannot generate correct Portuguese text, do not include any text."
-    url_corpo = gerar_imagem(prompt_corpo, "corpo")
+    if gerar_midia:
+        log("🎨 Gerando assets visuais (isso pode demorar)...")
+        try:
+             # 1. Imagem Ilustrativa (Lifestyle/Visual)
+            prompt_ilustrativa = f"A high quality, photorealistic or cinematic style photo-illustration about '{tema_ingles}'. Showing people, lifestyle, or the subject in a natural, positive way. NO TEXT. Suitable for a newsletter cover."
+            url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
+
+            # 2. Imagem Corpo (Infográfico/Educativo)
+            prompt_corpo = f"An educational infographic or diagram about '{tema_ingles}'. Clean lines, easy to understand, white background. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). If you cannot generate correct Portuguese text, do not include any text."
+            url_corpo = gerar_imagem(prompt_corpo, "corpo")
+        except Exception as e:
+            log(f"⚠️ Erro ao gerar imagens: {e}")
+    else:
+        log("⏩ Pulando geração de imagens (opção desmarcada).")
     
     check()
     # 4. Gerar Texto
@@ -832,10 +840,17 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
 
     check()
     # 4.5 Gerar Conteúdo Instagram (Extra)
-    log("📸 Criando conteúdo para Instagram...")
-    # Extrai texto das referências para passar de contexto
-    refs_text_context = "\n".join([r['texto'] for r in referencias])
-    instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context, conteudo_base=html_texto)
+    instagram_assets = []
+    if gerar_instagram:
+        log("📸 Criando conteúdo para Instagram...")
+        try:
+            # Extrai texto das referências para passar de contexto
+            refs_text_context = "\n".join([r['texto'] for r in referencias])
+            instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context, conteudo_base=html_texto)
+        except Exception as e:
+             log(f"⚠️ Erro ao gerar Instagram: {e}")
+    else:
+        log("⏩ Pulando geração de Instagram (opção desmarcada).")
     
     check()
 
@@ -937,33 +952,39 @@ def criar_campanha_revamais(tema=None, log_callback=None, check_cancel=None):
     
     check()
     # 7. Mailchimp
-    try:
-        log("📧 Enviando rascunho para o Mailchimp...")
-        campaign = mc.campaigns.create({
-            "type": "regular",
-            "recipients": {"list_id": MC_LIST_ID},
-            "settings": {
-                "subject_line": f"Reva +: {tema}",
-                "title": f"Reva + {datetime.now().strftime('%d/%m')}: {tema}",
-                "from_name": MC_FROM_NAME,
-                "reply_to": MC_REPLY_TO
-            }
-        })
-        mc.campaigns.set_content(campaign["id"], {"html": html_email})
-        log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
-        
-        # 8. Agendamento Automático
+    campaign = {"id": "DRAFT_SKIPPED"}
+    if enviar_email:
         try:
-            day_name = "Terça-feira" if is_calendar_source else "Domingo"
-            log(f"📅 Tentando agendar envio para próximo(a) {day_name}...")
+            log("📧 Enviando rascunho para o Mailchimp...")
+            campaign = mc.campaigns.create({
+                "type": "regular",
+                "recipients": {"list_id": MC_LIST_ID},
+                "settings": {
+                    "subject_line": f"Reva +: {tema}",
+                    "title": f"Reva + {datetime.now().strftime('%d/%m')}: {tema}",
+                    "from_name": MC_FROM_NAME,
+                    "reply_to": MC_REPLY_TO
+                }
+            })
+            mc.campaigns.set_content(campaign["id"], {"html": html_email})
+            log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
             
-            mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
-            log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC) [07:30 BRT]")
-            
+            # 8. Agendamento Automático (Só se criou campanha)
+            try:
+                day_name = "Terça-feira" if is_calendar_source else "Domingo"
+                log(f"📅 Tentando agendar envio para próximo(a) {day_name}...")
+                
+                mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
+                log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC) [07:30 BRT]")
+                
+            except Exception as e:
+                # Muitos planos gratuitos não permitem agendamento via API
+                log(f"⚠️ Falha no agendamento automático (Provável limitação do Plano Free ou Data): {e}")
+                log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende manualmente.")
         except Exception as e:
-            # Muitos planos gratuitos não permitem agendamento via API
-            log(f"⚠️ Falha no agendamento automático (Provável limitação do Plano Free ou Data): {e}")
-            log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende manualmente.")
+            log(f"❌ Erro Mailchimp: {e}")
+    else:
+        log("⏩ Pulando envio para Mailchimp (opção desmarcada).")
 
         # 9. Integração WhatsApp (Novo)
         try:

@@ -112,32 +112,72 @@ def processar_boletim_background(task_id: str, opcoes: dict):
         save_task(task_id, task_state)
         print(error_msg)
 
-def processar_revamais_background(task_id: str, tema: str):
+        print(error_msg)
+
+# Helper factories to cleaner code
+def make_log_callback(task_id):
+    def log(msg):
+        # Carrega estado atual para não sobrescrever logs anteriores
+        state = load_task(task_id) or {"logs": [], "status": "running"}
+        state["logs"].append(msg)
+        save_task(task_id, state)
+    return log
+
+def make_check_cancel(task_id):
+    def check():
+        state = load_task(task_id)
+        if state and state.get("status") == "canceling":
+            # Atualiza para canceled
+            state["status"] = "canceled"
+            state["logs"].append("🛑 Cancelado pelo usuário.")
+            save_task(task_id, state)
+            return True
+        return False
+    return check
+
+def update_task_status(task_id, status, log_msg=None):
+    state = load_task(task_id) or {"logs": []}
+    state["status"] = status
+    if log_msg:
+        state["logs"].append(log_msg)
+    save_task(task_id, state)
+
+def processar_revamais_background(task_id: str, opcoes: dict):
     """Função wrapper para Reva+ em background."""
     task_state = {"status": "running", "logs": [], "result": None}
     save_task(task_id, task_state)
     
     def log_callback(msg):
-        task_state["logs"].append(msg)
-        save_task(task_id, task_state)
+def processar_revamais_background(task_id: str, opcoes: dict):
+    """Função wrapper que roda o Reva+ e salva logs em arquivo. Agora com suporte a flags."""
+    log_callback = make_log_callback(task_id)
+    check_cancel = make_check_cancel(task_id)
+    
+    # Se recebeu string antiga (legacy), converte para dict
+    if isinstance(opcoes, str):
+        opcoes = {"tema_usuario": opcoes}
         
-    def check_cancel():
-        current = load_task(task_id)
-        if current and current.get("status") == "canceling":
-            task_state["status"] = "canceled"
-            task_state["logs"].append("🛑 Cancelado pelo usuário.")
-            save_task(task_id, task_state)
-            return True
-        return False
+    tema = opcoes.get("tema_usuario")
+    
+    # Atualiza status inicial
+    update_task_status(task_id, "running", f"🚀 Iniciando geração do Reva+ para: {tema}")
         
     try:
         from revamais_service import criar_campanha_revamais
-        resultado = criar_campanha_revamais(tema, log_callback=log_callback, check_cancel=check_cancel)
+        # Chama o serviço com as opções desempacotadas
+        resultado = criar_campanha_revamais(
+            tema_usuario=tema,
+            gerar_midia=opcoes.get("gerar_midia", True),
+            gerar_instagram=opcoes.get("gerar_instagram", True),
+            enviar_email=opcoes.get("enviar_email", True),
+            log_callback=log_callback,
+            check_cancel=check_cancel
+        )
+
         
         # Se retornou sucesso/erro (dict)
         if isinstance(resultado, dict):
             if resultado.get("status") == "error":
-                task_state["status"] = "error"
             else:
                 task_state["status"] = "completed"
             task_state["result"] = resultado
@@ -267,10 +307,16 @@ def iniciar_boletim(
         "message": "Boletim iniciado em segundo plano. Verifique o status com o ID fornecido."
     }
 
+class RevaMaisInput(BaseModel):
+    tema: str = ""
+    gerar_midia: bool = True
+    gerar_instagram: bool = True
+    enviar_email: bool = True
+
 @app.post("/iniciar-revamais")
 def iniciar_revamais(
     background_tasks: BackgroundTasks,
-    input_data: CampanhaInput
+    input_data: RevaMaisInput
 ):
     try:
         task_id = str(uuid.uuid4())
@@ -278,7 +324,15 @@ def iniciar_revamais(
         # Cria estado inicial
         save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando Reva+ ..."], "result": None})
         
-        background_tasks.add_task(processar_revamais_background, task_id, input_data.tema)
+        # Prepara opções
+        opcoes = {
+            "tema_usuario": input_data.tema,
+            "gerar_midia": input_data.gerar_midia,
+            "gerar_instagram": input_data.gerar_instagram,
+            "enviar_email": input_data.enviar_email
+        }
+        
+        background_tasks.add_task(processar_revamais_background, task_id, opcoes)
         
         return {
             "task_id": task_id,
