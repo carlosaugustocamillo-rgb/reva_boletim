@@ -277,6 +277,46 @@ def painel():
 
 # --- Novos Endpoints Background ---
 
+def processar_medico_background(task_id: str, dry_run: bool):
+    """Função wrapper que roda o boletim MEDICO e salva logs."""
+    log_callback = make_log_callback(task_id)
+    
+    update_task_status(task_id, "running", "🚀 Iniciando Boletim MEDICO...")
+    
+    try:
+        from medico_boletim_service import rodar_boletim_medico
+        rodar_boletim_medico(dry_run=dry_run, log_callback=log_callback)
+        
+        update_task_status(task_id, "completed", "✅ Boletim MEDICO finalizado.")
+        
+    except Exception as e:
+        import traceback
+        error_msg = f"❌ Erro fatal: {str(e)}\n{traceback.format_exc()}"
+        state = load_task(task_id) or {"logs": []}
+        state["status"] = "error"
+        state["logs"].append(error_msg)
+        save_task(task_id, state)
+
+@app.post("/iniciar-boletim-medico")
+def iniciar_boletim_medico(
+    background_tasks: BackgroundTasks,
+    dry_run: bool = False
+):
+    """
+    Inicia a geração do Boletim Médico Semanal.
+    Use dry_run=True para teste (sem Mailchimp).
+    """
+    task_id = str(uuid.uuid4())
+    save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando..."], "result": None})
+    
+    background_tasks.add_task(processar_medico_background, task_id, dry_run)
+    
+    return {
+        "task_id": task_id,
+        "status": "started",
+        "message": "Boletim Médico iniciado. Use /status-boletim/{task_id} para acompanhar."
+    }
+
 @app.post("/iniciar-boletim")
 def iniciar_boletim(
     background_tasks: BackgroundTasks,
