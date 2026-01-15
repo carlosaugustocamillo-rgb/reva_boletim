@@ -315,7 +315,7 @@ REGRAS DE ESTILO (CRÍTICO):
 3. **Sem Formalidade Rígida**: Não use "Prezados ouvintes", "Neste estudo, os autores objetivaram...". Fale: "O que eles queriam ver era...".
 4. **Reações Inteligentes**: A Manu deve fazer perguntas pertinentes e comentários que agreguem valor, não apenas "Nossa, que legal".
 5. **Humanidade**: Permita uma leve hesitação natural ou correção se fizer sentido para explicar um conceito complexo.
-6. **Entonação via Pontuação**: Use reticências (...) para pausas reflexivas, exclamações (!) para surpresa genuína, e itálico (se possível) para ênfase, embora foque na pontuação.
+6. **Entonação via Pontuação**: Use reticências (...) para pausas reflexivas, exclamações (!) para surpresa genuína. O modelo de áudio NÃO suporta instruções entre colchetes, então confie na pontuação.
 
 ESTRUTURA TÉCNICA (Rigor Obrigatório):
 - Apresente o estudo: "{titulo}" ({primeiro_autor}).
@@ -1147,12 +1147,12 @@ def rodar_boletim(opcoes=None):
                         audio_generator = elevenlabs_client.text_to_speech.convert(
                             voice_id=voice_id,
                             text=text,
-                            model_id="eleven_turbo_v2_5", # UPGRADE: Mais rápido e melhor para PT-BR
+                            model_id="eleven_multilingual_v2", # REVERTED: v2.5 falhou no teste de clonagem
                             output_format="mp3_44100_128",
                             voice_settings=VoiceSettings(
-                                stability=0.50,       # Reduzido para permitir mais entonação/emoção
+                                stability=0.50,       # "More Emotion" setting
                                 similarity_boost=0.75, 
-                                style=0.35,           # Aumentado para mais expressividade
+                                style=0.20,           # "With Style" setting approved by user
                                 use_speaker_boost=True
                             )
                         )

@@ -307,7 +307,7 @@ TEMPLATE_HTML_MEDICO = """
     <tr><td style="padding: 36px 20px 0 20px; text-align: center;"><h1 style="margin:0 0 10px 0;font-size:2.4em;color:#205776;font-family:Helvetica,Arial,sans-serif;font-weight:bold;">Olá, *|FNAME|*!</h1></td></tr>
     <tr>
       <td style="padding:0 20px 36px 20px; text-align:left;">
-        <span style="color:#407ca6;font-size:1.07em;font-family:Helvetica,Arial,sans-serif;">Confira a seleção semanal de artigos publicados nos periódicos de maior impacto (Q1 e Q2) em Pneumologia e Cirurgia Torácica.</span>
+        <span style="color:#407ca6;font-size:1.07em;font-family:Helvetica,Arial,sans-serif;">Confira a seleção semanal de artigos publicados nos periódicos em Pneumologia e Cirurgia Torácica, com destaque para a qualidade da evidência (Q1-Q4).</span>
         <div style="height:18px;"></div>
         <div style="font-size:1.1em; color:#111;font-family:Helvetica,Arial,sans-serif;">{conteudo}</div>
         <div style="height:34px;"></div>
