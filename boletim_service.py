@@ -780,6 +780,7 @@ def rodar_boletim(opcoes=None):
         )
         
         todos_artigos_relevantes = []
+        artigos_vistos_podcast = set()
 
         for tema, query in CONSULTAS_DETALHADAS.items():
             boletim_detalhado += f"## {tema}\n\n"
@@ -816,12 +817,17 @@ def rodar_boletim(opcoes=None):
 ---
 
 """
-                primeiro_autor = art['autores'][0] if art['autores'] else "Autor não identificado"
-                todos_artigos_relevantes.append({
-                    'titulo': art['titulo'],
-                    'resumo_traduzido': resumo_traduzido,
-                    'primeiro_autor': primeiro_autor
-                })
+                # [FIX]: Garante que o mesmo artigo não seja adicionado duas vezes (ex: se caiu em DPOC e ASMA)
+                if art['pmid'] not in artigos_vistos_podcast:
+                    artigos_vistos_podcast.add(art['pmid'])
+                    primeiro_autor = art['autores'][0] if art['autores'] else "Autor não identificado"
+                    todos_artigos_relevantes.append({
+                        'titulo': art['titulo'],
+                        'resumo_traduzido': resumo_traduzido,
+                        'primeiro_autor': primeiro_autor,
+                        'tipos': art.get('tipos', []), # Importante passar metadados
+                        'resumo_original': art.get('resumo_original', '')
+                    })
         
         boletim_detalhado += "\nCompartilhe com colegas. RevaCast Pesquisa Detalhada!"
 

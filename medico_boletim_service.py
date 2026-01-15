@@ -97,31 +97,25 @@ def load_journal_rankings(csv_path):
                 quartile = (row.get("JIF Quartile") or "").strip().upper()
                 category = (row.get("Category") or "").strip().upper()
                 
-                # FILTRO DE CATEGORIA: Exclui Reabilitação conforme pedido do usuário (07/01/2026)
-                if "REHABILITATION" in category:
-                    continue
+                if "REHABILITATION" in category: continue
 
-                # PRIORIZA Q1:
-                # Se o journal já existe no mapa:
-                # - Se já é Q1, mantém Q1 (ignora se o atual for Q2).
-                # - Se é Q2 e o atual é Q1, atualiza para Q1.
-                # - Se não existe, adiciona.
-                
-                if journal_name:
+                # Carrega QUALQUER Quartil (Q1, Q2, Q3, Q4)
+                if journal_name and quartile in ["Q1", "Q2", "Q3", "Q4"]:
+                    q_score = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
                     current_val = journal_map.get(journal_name)
                     
-                    if quartile == "Q1":
-                        if current_val != "Q1":
-                            journal_map[journal_name] = "Q1"
-                            count_q1 += 1
-                            if current_val == "Q2": count_q2 -= 1 # Ajusta contagem se fez upgrade
-                    
-                    elif quartile == "Q2":
-                        if journal_name not in journal_map:
-                            journal_map[journal_name] = "Q2"
-                            count_q2 += 1
+                    # Se não existe, adiciona
+                    if not current_val:
+                        journal_map[journal_name] = quartile
+                        if quartile == "Q1": count_q1 += 1
+                        elif quartile == "Q2": count_q2 += 1
+                    else:
+                        # Se existe, atualiza se for melhor (Q1 < Q2)
+                        if q_score[quartile] < q_score.get(current_val, 99):
+                            journal_map[journal_name] = quartile
+                            # (Não ajustamos counts retroativamente para simplificar, o log é aproximado)
                         
-            print(f"✅ Carregados {count_q1} journals Q1 e {count_q2} journals Q2.")
+            print(f"✅ Carregados Rankings (Q1: ~{count_q1}, Q2: ~{count_q2}, Total: {len(journal_map)}).")
     except Exception as e:
         print(f"❌ Erro ao ler CSV: {e}")
     
@@ -140,24 +134,27 @@ JOURNAL_RANKING_MAP = {}
 FILTRO_EVIDENCIA = '(randomized controlled trial[pt] OR systematic review[pt] OR meta-analysis[pt] OR practice guideline[pt])'
 FILTRO_EXCLUSAO = 'NOT ("Exercise"[Mesh] OR "Exercise Therapy"[Mesh] OR "Rehabilitation"[Mesh] OR "Physical Therapy Modalities"[Mesh] OR "exercise"[tiab] OR "training"[tiab] OR "rehabilitation"[tiab])'
 
-# Montando queries específicas
+# Montando queries específicas (Híbridas MeSH + TIAB para pegar artigos recentes "Pre-Index")
 def build_query(core_term):
-    return f'({core_term}) AND {FILTRO_EVIDENCIA} {FILTRO_EXCLUSAO} AND humans[Mesh]'
+    # Core term já deve incluir (Mesh OR tiab)
+    # Filtro de tratamento geral
+    TRATAMENTO = '("drug therapy"[Subheading] OR "therapy"[Subheading] OR "surgery"[Subheading] OR "treatment"[tiab] OR "therapy"[tiab] OR "drug"[tiab] OR "surgery"[tiab] OR "intervention"[tiab])'
+    return f'({core_term}) AND {TRATAMENTO} AND {FILTRO_EVIDENCIA} {FILTRO_EXCLUSAO} AND humans[Mesh]'
 
 CONSULTAS_MEDICAS = {
-    "Asma": build_query('("Asthma/drug therapy"[Mesh] OR "Asthma/surgery"[Mesh] OR "Asthma/therapy"[Mesh])'),
+    "Asma": build_query('("Asthma"[Mesh] OR "asthma"[tiab])'),
     
-    "DPOC": build_query('("Pulmonary Disease, Chronic Obstructive/drug therapy"[Mesh] OR "Pulmonary Disease, Chronic Obstructive/surgery"[Mesh] OR "Pulmonary Disease, Chronic Obstructive/therapy"[Mesh])'),
+    "DPOC": build_query('("Pulmonary Disease, Chronic Obstructive"[Mesh] OR "COPD"[tiab] OR "chronic obstructive pulmonary disease"[tiab])'),
     
-    "Doenças Intersticiais": build_query('("Lung Diseases, Interstitial/drug therapy"[Mesh] OR "Lung Diseases, Interstitial/surgery"[Mesh] OR "Lung Diseases, Interstitial/therapy"[Mesh] OR "Idiopathic Pulmonary Fibrosis/drug therapy"[Mesh])'),
+    "Doenças Intersticiais": build_query('("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "pulmonary fibrosis"[tiab] OR "Idiopathic Pulmonary Fibrosis"[Mesh])'),
     
-    "Hipertensão Pulmonar": build_query('("Hypertension, Pulmonary/drug therapy"[Mesh] OR "Hypertension, Pulmonary/surgery"[Mesh] OR "Hypertension, Pulmonary/therapy"[Mesh])'),
+    "Hipertensão Pulmonar": build_query('("Hypertension, Pulmonary"[Mesh] OR "pulmonary hypertension"[tiab])'),
     
-    "Bronquiectasias": build_query('("Bronchiectasis/drug therapy"[Mesh] OR "Bronchiectasis/surgery"[Mesh] OR "Bronchiectasis/therapy"[Mesh])'),
+    "Bronquiectasias": build_query('("Bronchiectasis"[Mesh] OR "bronchiectasis"[tiab])'),
     
-    "Broncoscopia/Intervencionista": build_query('("Bronchoscopy"[Mesh] OR "Procedures and Techniques"[Mesh]) AND ("Lung Diseases"[Mesh])'),
+    "Broncoscopia/Intervencionista": '(("Bronchoscopy"[Mesh] OR "bronchoscopy"[tiab] OR "EBUS"[tiab]) OR ("Procedures and Techniques"[Mesh])) AND ("Lung Diseases"[Mesh] OR "lung"[tiab]) AND (randomized controlled trial[pt] OR systematic review[pt] OR meta-analysis[pt])',
 
-    "Infecções Respiratórias": build_query('("Respiratory Tract Infections/drug therapy"[Mesh] OR "Pneumonia/drug therapy"[Mesh])')
+    "Infecções Respiratórias": build_query('("Respiratory Tract Infections"[Mesh] OR "Pneumonia"[Mesh] OR "pneumonia"[tiab] OR "respiratory infection"[tiab])')
 }
 
 # ======================================================================
@@ -393,68 +390,63 @@ def rodar_boletim_medico(dry_run=False, output_file="boletim_medico_preview.html
     global JOURNAL_RANKING_MAP
     JOURNAL_RANKING_MAP = load_journal_rankings(CSV_JCR_PATH)
     
-    # Armazena candidatos: { 'Tema': {'q1': [art...], 'q2': [art...]} }
-    candidatos_por_tema = {}
-    total_q1_encontrados = 0
+    # 2. Coleta (Janela Fixa de 7 dias, conforme pedido do usuário)
+    # Motivo: Priorizar atualidade. Coleta TUDO (Q1-Q4).
     
-    log_callback("\n🕵️  COLETANDO CANDIDATOS (Passo 1/2)...")
+    candidatos_por_tema = {} # { 'Tema': [artigo, artigo...] }
+    
+    log_callback("\n🕵️  COLETANDO CANDIDATOS (Janela: 7 dias)...")
+    
     for tema, query in CONSULTAS_MEDICAS.items():
         log_callback(f"   > Tema: {tema}")
-        candidatos_por_tema[tema] = {'q1': [], 'q2': []}
+        candidatos_por_tema[tema] = []
         
-        ids = buscar_ids(query)
+        ids = buscar_ids(query, dias_atras=7)
         if not ids: continue
         
         artigos = buscar_detalhes(ids)
         for art in artigos:
             journal_upper = art['journal'].upper().strip()
-            
-            # Identifica Quartil
             quartil = JOURNAL_RANKING_MAP.get(journal_upper)
             
-            if not quartil:
-                # Debug leve
-                # log_callback(f"     [Ignorado - Sem Quartil] {journal_upper}")
-                continue
+            if not quartil: continue
             
-            # FILTRO EXERCICIO (Segurança extra)
+            # FILTRO EXERCICIO
             texto_chk = (art['titulo'] + " " + art['abstract']).lower()
             termos_banidos = ["physical therapy", "physiotherapy", "rehabilitation program", "exercise training", "aerobic training"]
-            if any(termo in texto_chk for termo in termos_banidos):
-                # log_callback(f"     [Ignorado - Termo Banido] {art['titulo'][:30]}...")
-                continue
+            if any(termo in texto_chk for termo in termos_banidos): continue
             
-            if quartil == 'Q1':
-                candidatos_por_tema[tema]['q1'].append(art)
-                total_q1_encontrados += 1
-            elif quartil == 'Q2':
-                candidatos_por_tema[tema]['q2'].append(art)
-    
-    # DECISÃO DE ESCOPO
-    usar_q2 = False
-    if total_q1_encontrados == 0:
-        log_callback("\n⚠️  NENHUM ARTIGO Q1 ENCONTRADO! Ativando o modo de contingência (Incluindo Q2)...")
-        usar_q2 = True
-    else:
-        log_callback(f"\n✅ Encontrados {total_q1_encontrados} artigos Q1. Processando apenas Q1.")
+            # Adiciona artigo com info de Quartil para ordenação futura
+            art['quartil'] = quartil
+            candidatos_por_tema[tema].append(art)
 
-    # PROCESSAMENTO E TRADUÇÃO
-    log_callback("\n🧠 TRADUZINDO E GERANDO BOLETIM (Passo 2/2)...")
+    # PROCESSAMENTO E GERAÇÃO DE HTML
+    log_callback("\n🧠 TRADUZINDO E GERAÇÃO DE HTML (Passo 2/2)...")
     html_corpo = ""
     total_final = 0
     
-    for tema, grupos in candidatos_por_tema.items():
-        # Lista final para este tema
-        lista_arts = grupos['q1']
-        if usar_q2:
-            lista_arts.extend(grupos['q2'])
+    # Mapa de prioridade para ordenação
+    q_rank = {"Q1": 1, "Q2": 2, "Q3": 3, "Q4": 4}
+    
+    for tema, lista_arts in candidatos_por_tema.items():
+        if not lista_arts:
+            log_callback(f"   > {tema}: Nenhum artigo rankeado encontrado.")
+            continue
             
-        if not lista_arts: continue
+        # ORDENAÇÃO: Q1 Primeiro -> Q2 -> Q3 -> Q4
+        lista_arts.sort(key=lambda x: q_rank.get(x['quartil'], 99))
+        
+        count_tema = len(lista_arts)
+        # Identifica o melhor quartil encontrado para log
+        melhor_q = lista_arts[0]['quartil']
+        log_callback(f"   > {tema}: {count_tema} artigos (Melhor: {melhor_q})")
         
         html_corpo += f"<h2 style='color: #d9534f; margin-top: 40px; border-bottom: 2px solid #d9534f;'>{tema}</h2>"
         
         for art in lista_arts:
-            q_label = JOURNAL_RANKING_MAP.get(art['journal'].upper().strip(), 'Q?')
+            quartil = art['quartil']
+            q_label = quartil
+            
             log_callback(f"     - [{q_label}] {art['titulo'][:60]}...")
             
             resumo_pt = traduzir_resumo_medico(art['abstract'])
@@ -463,7 +455,7 @@ def rodar_boletim_medico(dry_run=False, output_file="boletim_medico_preview.html
 
     # Finaliza HTML
     if total_final == 0:
-        log_callback("\n❌ Nenhum artigo selecionado em nenhum tema (Mesmo com Q2 se ativado).")
+        log_callback("\n❌ Nenhum artigo selecionado em nenhum tema.")
         return
         
     html_final = TEMPLATE_HTML_MEDICO.format(conteudo=html_corpo)
@@ -482,11 +474,9 @@ def rodar_boletim_medico(dry_run=False, output_file="boletim_medico_preview.html
             mc.set_config({"api_key": MC_API_KEY, "server": MC_SERVER})
             
             hoje_str = datetime.now().strftime("%d/%m/%Y")
+            
+            # Assunto Genérico (Q1-Q4)
             subject = f"Revalida Medical - {hoje_str}"
-            if usar_q2:
-                 subject += " (Edição Ampliada)"
-            else:
-                 subject += " (Destaques Q1)"
 
             campaign = mc.campaigns.create({
                 "type": "regular",
