@@ -303,28 +303,29 @@ def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False)
         contexto_final = "NÃO finalize o podcast. Deixe a conversa aberta para o próximo estudo."
     
     prompt = f"""
-Você é um roteirista do RevaCast Weekly, um podcast sobre ciência da saúde e exercício físico.
+Atue como um roteirista sênior de podcast sobre CIÊNCIA.
+Crie um diálogo NATURAL e CONVERSACIONAL entre o HOST (Ivo) e a COHOST (Manu).
 
-Crie um DIÁLOGO NATURAL entre dois apresentadores (HOST e COHOST) discutindo este estudo científico.
+TOM DE VOZ: "Professional Casual".
+Imagine dois colegas médicos/cientistas conversando no corredor ou num café. Eles são amigos, mas estão discutindo ciência séria.
 
-REGRAS OBRIGATÓRIAS:
-- NUNCA invente dados, números ou resultados que não estejam no resumo
-- {contexto_inicial}
-- {contexto_final}
-- NÃO use saudações genéricas como "Olá", "Oi", "Bem-vindos" (apenas as frases de transição especificadas acima).
-- NÃO se apresente ou reapresente.
-- Faça uma conversa dinâmica e natural, como dois colegas discutindo artigos.
-- O HOST apresenta o estudo, o COHOST faz perguntas e comenta.
-- Mantenha informal mas profissional.
-- AUMENTE A PROFUNDIDADE (CRÍTICO): O diálogo DEVE ter entre 10 a 16 trocas de fala.
-- NÃO SEJA SUPERFICIAL. O ouvinte quer detalhes técnicos.
-- OBRIGATÓRIO discutir:
-  1. METODOLOGIA: Qual o n? Qual o desenho? Quanto tempo? Qual a intervenção exata?
-  2. RESULTADOS: Quais os números? P-valor? Intervalo de confiança? Quem melhorou mais?
-  3. APLICAÇÃO CLÍNICA: O que isso muda na prática?
-- Cada fala deve ser substancial (2 a 4 frases). Evite falas curtas como "Concordo" ou "Legal". Se concordar, complemente com uma informação.
-- Use as abreviações formatadas corretamente (ex: D.P.O.C., V.E.F.1).
-- O arquivo final de áudio DEVE ter pelo menos 2 minutos POR ESTUDO. Escreva bastante texto!
+REGRAS DE ESTILO (CRÍTICO):
+1. **Naturalidade**: Use frases fluidas, mas evite gírias excessivas ou linguagem muito "jovem" (nada de "tipo assim", "bizarro", "loucura").
+2. **Marcadores de Conversa (Moderados)**: Use "Então...", "Pois é...", "É interessante que...", "Sabe...". Isso ajuda a não parecer robótico.
+3. **Sem Formalidade Rígida**: Não use "Prezados ouvintes", "Neste estudo, os autores objetivaram...". Fale: "O que eles queriam ver era...".
+4. **Reações Inteligentes**: A Manu deve fazer perguntas pertinentes e comentários que agreguem valor, não apenas "Nossa, que legal".
+5. **Humanidade**: Permita uma leve hesitação natural ou correção se fizer sentido para explicar um conceito complexo.
+6. **Entonação via Pontuação**: Use reticências (...) para pausas reflexivas, exclamações (!) para surpresa genuína, e itálico (se possível) para ênfase, embora foque na pontuação.
+
+ESTRUTURA TÉCNICA (Rigor Obrigatório):
+- Apresente o estudo: "{titulo}" ({primeiro_autor}).
+- Metodologia: Explique o desenho de forma clara.
+- Resultados: Diga os números exatos (P-valor, IC), pois o público é médico/técnico.
+- Conclusão: Implicação prática.
+
+FORMATO:
+Retorne APENAS um JSON array: [{{"speaker": "HOST", "text": "..."}}, {{"speaker": "COHOST", "text": "..."}}]
+Use a notação para entonação se a IA de voz suportar, mas foque no TEXTO ser expressivo.
 
 Contexto do estudo:
 Título: {titulo}
@@ -1146,12 +1147,12 @@ def rodar_boletim(opcoes=None):
                         audio_generator = elevenlabs_client.text_to_speech.convert(
                             voice_id=voice_id,
                             text=text,
-                            model_id="eleven_multilingual_v2",
+                            model_id="eleven_turbo_v2_5", # UPGRADE: Mais rápido e melhor para PT-BR
                             output_format="mp3_44100_128",
                             voice_settings=VoiceSettings(
-                                stability=0.75,       # Aumentado para garantir consistência
+                                stability=0.50,       # Reduzido para permitir mais entonação/emoção
                                 similarity_boost=0.75, 
-                                style=0.0,            # Zero para evitar variações estranhas
+                                style=0.35,           # Aumentado para mais expressividade
                                 use_speaker_boost=True
                             )
                         )

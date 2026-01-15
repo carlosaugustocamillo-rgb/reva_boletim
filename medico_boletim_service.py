@@ -135,12 +135,13 @@ FILTRO_EVIDENCIA = '(randomized controlled trial[pt] OR systematic review[pt] OR
 # FILTRO_EXCLUSAO removido a pedido do usuário (15/01/2026)
 
 # Montando queries específicas (Híbridas MeSH + TIAB para pegar artigos recentes "Pre-Index")
+# Montando queries específicas (Híbridas MeSH + TIAB para pegar artigos recentes "Pre-Index")
 def build_query(core_term):
     # Core term já deve incluir (Mesh OR tiab)
     # Filtro de tratamento geral
     TRATAMENTO = '("drug therapy"[Subheading] OR "therapy"[Subheading] OR "surgery"[Subheading] OR "treatment"[tiab] OR "therapy"[tiab] OR "drug"[tiab] OR "surgery"[tiab] OR "intervention"[tiab])'
-    # Removido {FILTRO_EXCLUSAO}
-    return f'({core_term}) AND {TRATAMENTO} AND {FILTRO_EVIDENCIA} AND humans[Mesh]'
+    # Removido {FILTRO_EXCLUSAO} e {FILTRO_EVIDENCIA} (Teste 15/01)
+    return f'({core_term}) AND {TRATAMENTO} AND humans[Mesh]'
 
 CONSULTAS_MEDICAS = {
     "Asma": build_query('("Asthma"[Mesh] OR "asthma"[tiab])'),
@@ -153,7 +154,7 @@ CONSULTAS_MEDICAS = {
     
     "Bronquiectasias": build_query('("Bronchiectasis"[Mesh] OR "bronchiectasis"[tiab])'),
     
-    "Broncoscopia/Intervencionista": '(("Bronchoscopy"[Mesh] OR "bronchoscopy"[tiab] OR "EBUS"[tiab]) OR ("Procedures and Techniques"[Mesh])) AND ("Lung Diseases"[Mesh] OR "lung"[tiab]) AND (randomized controlled trial[pt] OR systematic review[pt] OR meta-analysis[pt])',
+    "Broncoscopia/Intervencionista": '(("Bronchoscopy"[Mesh] OR "bronchoscopy"[tiab] OR "EBUS"[tiab]) OR ("Procedures and Techniques"[Mesh])) AND ("Lung Diseases"[Mesh] OR "lung"[tiab])',
 
     "Infecções Respiratórias": build_query('("Respiratory Tract Infections"[Mesh] OR "Pneumonia"[Mesh] OR "pneumonia"[tiab] OR "respiratory infection"[tiab])')
 }
