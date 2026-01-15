@@ -132,14 +132,15 @@ JOURNAL_RANKING_MAP = {}
 # Exclusão: "Exercise"[Mesh], "Rehabilitation"[Mesh], "Physical Therapy Modalities"[Mesh]
 
 FILTRO_EVIDENCIA = '(randomized controlled trial[pt] OR systematic review[pt] OR meta-analysis[pt] OR practice guideline[pt])'
-FILTRO_EXCLUSAO = 'NOT ("Exercise"[Mesh] OR "Exercise Therapy"[Mesh] OR "Rehabilitation"[Mesh] OR "Physical Therapy Modalities"[Mesh] OR "exercise"[tiab] OR "training"[tiab] OR "rehabilitation"[tiab])'
+# FILTRO_EXCLUSAO removido a pedido do usuário (15/01/2026)
 
 # Montando queries específicas (Híbridas MeSH + TIAB para pegar artigos recentes "Pre-Index")
 def build_query(core_term):
     # Core term já deve incluir (Mesh OR tiab)
     # Filtro de tratamento geral
     TRATAMENTO = '("drug therapy"[Subheading] OR "therapy"[Subheading] OR "surgery"[Subheading] OR "treatment"[tiab] OR "therapy"[tiab] OR "drug"[tiab] OR "surgery"[tiab] OR "intervention"[tiab])'
-    return f'({core_term}) AND {TRATAMENTO} AND {FILTRO_EVIDENCIA} {FILTRO_EXCLUSAO} AND humans[Mesh]'
+    # Removido {FILTRO_EXCLUSAO}
+    return f'({core_term}) AND {TRATAMENTO} AND {FILTRO_EVIDENCIA} AND humans[Mesh]'
 
 CONSULTAS_MEDICAS = {
     "Asma": build_query('("Asthma"[Mesh] OR "asthma"[tiab])'),
