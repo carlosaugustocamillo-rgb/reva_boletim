@@ -414,8 +414,32 @@ def dividir_texto(texto, limite=4096):
 
 def artigo_tem_exercicio_no_resumo(artigo):
     resumo = artigo.get('resumo_original', '').lower()
-    termos = ['exercise', 'exercício', 'exercícios', 'exercising', 'training', 'atividade física']
-    return any(term in resumo for term in termos)
+    titulo = artigo.get('titulo', '').lower()
+    texto_completo = f"{titulo} {resumo}"
+    
+    # Termos OBRIGATÓRIOS (pelo menos um destes deve estar presente)
+    termos_relevantes = [
+        'exercise', 'exercício', 'exercising', 
+        'rehabilitation', 'reabilitação',
+        'physical therapy', 'fisioterapia',
+        'training', 'treinamento', # Mantendo 'training' mas com caution (ex: "resistance training")
+        'physical activity', 'atividade física',
+        'fitness', 'aptidão',
+        'gait', 'caminhada', 'walking'
+    ]
+    
+    # Termos de EXCLUSÃO (se tiver isso, provavelmente não é rehab clínica ou é inconclusivo)
+    # Ex: "training set" (IA), "training cohort" (estudos de coorte sem intervenção)
+    termos_exclusao = [
+        'training set', 'validation set', 'training cohort', 
+        'medical training', 'resident training', 'surgeon training',
+        'exercise of authority', 'exercise of power'
+    ]
+    
+    if any(excl in texto_completo for excl in termos_exclusao):
+        return False
+        
+    return any(term in texto_completo for term in termos_relevantes)
 
 
 def formatar_artigo_para_html(artigo, resumo_traduzido):
