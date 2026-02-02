@@ -813,7 +813,8 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     # 3. Gerar Imagens
     url_capa_estatica = "https://i.imgur.com/oGzxgtK.jpeg"
     url_ilustrativa = "https://placehold.co/600x400?text=Imagem+Ilustrativa" # Placeholder default
-    url_corpo = "https://placehold.co/600x400?text=Infografico" # Placeholder default
+    url_corpo_ciencia = "https://placehold.co/600x400?text=Infografico+Ciencia" # Placeholder default
+    url_corpo_dicas = "https://placehold.co/600x400?text=Infografico+Dicas" # Placeholder default
 
     if gerar_midia:
         log("🎨 Gerando assets visuais (isso pode demorar)...")
@@ -822,9 +823,23 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
             prompt_ilustrativa = f"A high quality, photorealistic or cinematic style photo-illustration about '{tema_ingles}'. Showing people, lifestyle, or the subject in a natural, positive way. NO TEXT. Suitable for a newsletter cover."
             url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
 
-            # 2. Imagem Corpo (Infográfico/Educativo)
-            prompt_corpo = f"An educational infographic or diagram about '{tema_ingles}'. Clean lines, easy to understand, white background. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). If you cannot generate correct Portuguese text, do not include any text."
-            url_corpo = gerar_imagem(prompt_corpo, "corpo")
+            # 2. Imagem Corpo (Infográfico/Educativo) - Ciência/Mecanismo
+            prompt_corpo_ciencia = (
+                f"An educational infographic or diagram focused ONLY on the scientific mechanism or evidence about '{tema_ingles}'. "
+                "Keep it simple, minimal elements, high contrast, white background. "
+                "At most 2-3 short labels. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). "
+                "If you cannot generate correct Portuguese text, do not include any text."
+            )
+            url_corpo_ciencia = gerar_imagem(prompt_corpo_ciencia, "corpo_ciencia")
+
+            # 3. Imagem Corpo (Infográfico/Educativo) - Dicas Práticas
+            prompt_corpo_dicas = (
+                f"A clean educational infographic focused ONLY on practical tips for '{tema_ingles}'. "
+                "Use a simple checklist/steps style, minimal elements, white background. "
+                "At most 3 short tips. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). "
+                "If you cannot generate correct Portuguese text, do not include any text."
+            )
+            url_corpo_dicas = gerar_imagem(prompt_corpo_dicas, "corpo_dicas")
         except Exception as e:
             log(f"⚠️ Erro ao gerar imagens: {e}")
     else:
@@ -834,6 +849,43 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     # 4. Gerar Texto
     log("✍️ Escrevendo boletim e formatando HTML...")
     html_texto = gerar_conteudo_revamais(tema, referencias)
+
+    def inserir_imagem_educativa(html, img_url, h2_regex, fallback="first_h2"):
+        """Insere a imagem educativa após um H2 alvo, com fallback controlado."""
+        img_tag = f'\n<img src="{img_url}" class="body-img" alt="Infográfico">\n'
+        import re
+        pattern = re.compile(rf'(<h2[^>]*>\\s*{h2_regex}\\s*</h2>)', re.IGNORECASE)
+        match = pattern.search(html)
+        if match:
+            pos = match.end()
+            return html[:pos] + img_tag + html[pos:]
+
+        pattern_h2 = re.compile(r'(<h2[^>]*>.*?</h2>)', re.IGNORECASE | re.DOTALL)
+        matches = list(pattern_h2.finditer(html))
+        if matches:
+            if fallback == "last_h2":
+                pos = matches[-1].end()
+                return html[:pos] + img_tag + html[pos:]
+            # default: first_h2
+            pos = matches[0].end()
+            return html[:pos] + img_tag + html[pos:]
+
+        # Último recurso: adiciona ao final do conteúdo
+        return html + img_tag
+
+    # Insere as duas imagens educativas dentro do texto
+    html_texto = inserir_imagem_educativa(
+        html_texto,
+        url_corpo_ciencia,
+        r"O\\s+que\\s+a\\s+Ci[eê]ncia\\s+Comprova\\??",
+        fallback="first_h2",
+    )
+    html_texto = inserir_imagem_educativa(
+        html_texto,
+        url_corpo_dicas,
+        r"Dicas\\s+Pr[aá]ticas",
+        fallback="last_h2",
+    )
 
     check()
     # 4.5 Gerar Conteúdo Instagram (Extra)
@@ -919,9 +971,6 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
                 <img src="{url_ilustrativa}" class="body-img" alt="Ilustração do Título">
                 
                 {html_texto}
-
-                <!-- Imagem Educativa (Existente) -->
-                <img src="{url_corpo}" class="body-img" alt="Infográfico">
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
@@ -1020,12 +1069,17 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     custo_real['brl'] = custo_real['brl'] * random.uniform(0.9, 1.1)
     custo_real['usd'] = custo_real['usd'] * random.uniform(0.9, 1.1)
 
+    # Backward compatibility: mantém url_corpo como a imagem científica
+    url_corpo = url_corpo_ciencia
+
     return {
         "status": "success", 
         "campaign_id": campaign['id'], 
         "url_capa": url_capa_estatica,
         "url_ilustrativa": url_ilustrativa,
         "url_corpo": url_corpo,
+        "url_corpo_ciencia": url_corpo_ciencia,
+        "url_corpo_dicas": url_corpo_dicas,
         "custo_estimado": custo_real,
         "instagram_assets": instagram_assets,
         "instagram_format": formato_instagram,
