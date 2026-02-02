@@ -140,27 +140,37 @@ def buscar_referencias_pubmed(tema_ingles):
     # 2. Busca Ampliada (30 artigos)
     from datetime import timedelta
     agora = datetime.now()
-    data_ini = (agora - timedelta(days=5*365)).strftime("%Y/%m/%d")
-    data_fim = agora.strftime("%Y/%m/%d")
-    date_term = f'("{data_ini}"[Date - Publication] : "{data_fim}"[Date - Publication])'
 
-    # Query tenta focar em alta evidência primeiro, mas permite Reviews
-    query = (
-        f"({tema_ingles}) AND "
-        f"(Systematic Review[pt] OR Randomized Controlled Trial[pt] OR Review[pt] OR Meta-Analysis[pt]) AND "
-        f"{date_term}"
-    )
-    
-    candidates = []
-    try:
+    def build_query(years_back: int):
+        data_ini = (agora - timedelta(days=years_back * 365)).strftime("%Y/%m/%d")
+        data_fim = agora.strftime("%Y/%m/%d")
+        date_term = f'("{data_ini}"[Date - Publication] : "{data_fim}"[Date - Publication])'
+        # Query tenta focar em alta evidência primeiro, mas permite Reviews
+        return (
+            f"({tema_ingles}) AND "
+            f"(Systematic Review[pt] OR Randomized Controlled Trial[pt] OR Review[pt] OR Meta-Analysis[pt]) AND "
+            f"{date_term}"
+        )
+
+    def search_ids(query):
         handle = Entrez.esearch(db="pubmed", term=query, retmax=40, sort="relevance")
         record = Entrez.read(handle)
         handle.close()
-        ids = record["IdList"]
-        
+        return record["IdList"]
+
+    query = build_query(5)
+    
+    candidates = []
+    try:
+        ids = search_ids(query)
+
         if not ids:
-             print("⚠️ Nenhuma referência encontrada na busca inicial.")
-             return []
+            print("⚠️ Nenhuma referência encontrada na busca inicial (5 anos). Tentando janela de 10 anos...")
+            query = build_query(10)
+            ids = search_ids(query)
+            if not ids:
+                print("⚠️ Nenhuma referência encontrada na janela de 10 anos.")
+                return []
 
         handle = Entrez.efetch(db="pubmed", id=ids, retmode="xml")
         papers = Entrez.read(handle)
