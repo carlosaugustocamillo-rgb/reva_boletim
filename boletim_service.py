@@ -310,12 +310,14 @@ TOM DE VOZ: "Professional Casual".
 Imagine dois colegas médicos/cientistas conversando no corredor ou num café. Eles são amigos, mas estão discutindo ciência séria.
 
 REGRAS DE ESTILO (CRÍTICO):
-1. **Naturalidade**: Use frases fluidas, mas evite gírias excessivas ou linguagem muito "jovem" (nada de "tipo assim", "bizarro", "loucura").
-2. **Marcadores de Conversa (Moderados)**: Use "Então...", "Pois é...", "É interessante que...", "Sabe...". Isso ajuda a não parecer robótico.
-3. **Sem Formalidade Rígida**: Não use "Prezados ouvintes", "Neste estudo, os autores objetivaram...". Fale: "O que eles queriam ver era...".
-4. **Reações Inteligentes**: A Manu deve fazer perguntas pertinentes e comentários que agreguem valor, não apenas "Nossa, que legal".
-5. **Humanidade**: Permita uma leve hesitação natural ou correção se fizer sentido para explicar um conceito complexo.
-6. **Entonação via Pontuação**: Use reticências (...) para pausas reflexivas, exclamações (!) para surpresa genuína. O modelo de áudio NÃO suporta instruções entre colchetes, então confie na pontuação.
+1. **Naturalidade**: Use frases fluidas, mas evite gírias excessivas.
+2. **Marcadores de Conversa**: Use "Então...", "Pois é...", mas VARIE. Não comece todo estudo igual.
+3. **Sem Formalidade Rígida**: Fale como colegas.
+4. **Reações Inteligentes**: A Manu deve fazer perguntas pertinentes.
+5. **Transição e Encerramento (OBRIGATÓRIO)**:
+   - {contexto_inicial}
+   - {contexto_final}
+6. **Entonação via Pontuação**: Use reticências (...) e exclamações (!).
 
 ESTRUTURA TÉCNICA (Rigor Obrigatório):
 - Apresente o estudo: "{titulo}" ({primeiro_autor}).
