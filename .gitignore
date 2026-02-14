@@ -1,4 +1,5 @@
 .venv/
+.venv_test/
 __pycache__/
 *.pyc
 .env
@@ -10,3 +11,12 @@ audios/
 .DS_Store
 .env_copy_naousar.example
 firebase_credentials.json
+
+# Artefatos locais de depuração/teste
+boletim_medico_preview.html
+check_import.py
+check_syntax.py
+debug_*.py
+force_state_update.py
+sample_*.mp3
+test_whatsapp_manual.py
