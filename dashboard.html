@@ -182,15 +182,19 @@
             </label>
 
             <label style="display: block; margin: 5px 0;">
-                <input type="checkbox" id="opt_audio" checked> 3. Gerar Áudio (ElevenLabs)
+                <input type="checkbox" id="opt_revisao_roteiro" checked> 3. Revisar Fluidez do Roteiro (IA - Etapa 8.5)
             </label>
 
             <label style="display: block; margin: 5px 0;">
-                <input type="checkbox" id="opt_mailchimp" checked> 4. Enviar E-mail (Mailchimp)
+                <input type="checkbox" id="opt_audio" checked> 4. Gerar Áudio (ElevenLabs)
             </label>
 
             <label style="display: block; margin: 5px 0;">
-                <input type="checkbox" id="opt_firebase" checked> 5. Upload e RSS (Firebase)
+                <input type="checkbox" id="opt_mailchimp" checked> 5. Enviar E-mail (Mailchimp)
+            </label>
+
+            <label style="display: block; margin: 5px 0;">
+                <input type="checkbox" id="opt_firebase" checked> 6. Upload e RSS (Firebase)
             </label>
         </div>
 
@@ -544,6 +548,7 @@
             // Lê as opções
             const resumos = document.getElementById('opt_resumos').checked;
             const roteiro = document.getElementById('opt_roteiro').checked;
+            const revisao_roteiro = document.getElementById('opt_revisao_roteiro').checked;
             const audio = document.getElementById('opt_audio').checked;
             const mailchimp = document.getElementById('opt_mailchimp').checked;
             const firebase = document.getElementById('opt_firebase').checked;
@@ -560,7 +565,7 @@
 
             // Monta query params
             const params = new URLSearchParams({
-                resumos, roteiro, audio, mailchimp, firebase
+                resumos, roteiro, revisao_roteiro, audio, mailchimp, firebase
             });
 
             try {
@@ -759,6 +764,21 @@
                     </div>
                     `;
                                 logDiv.innerHTML += downloadBtn;
+                            }
+
+                            if (data.result && (data.result.brief_spotify_download_url || data.result.data_referencia)) {
+                                const briefUrl = data.result.brief_spotify_download_url || `/baixar-brief/${data.result.data_referencia}`;
+                                const briefFilename = data.result.data_referencia
+                                    ? `brief_spotify_${data.result.data_referencia}.txt`
+                                    : 'brief_spotify.txt';
+                                const briefBtn = `
+                    <div style="margin-top: 10px; text-align: center;">
+                        <button onclick="forceDownload('${briefUrl}', '${briefFilename}')" style="background-color: #1f6feb; color: white; padding: 10px 20px; border:none; cursor:pointer; border-radius: 5px; font-weight: bold; font-size: 16px;">
+                            ⬇️ Baixar Brief para Spotify
+                        </button>
+                    </div>
+                    `;
+                                logDiv.innerHTML += briefBtn;
                             }
 
                             if (data.result && data.result.custos) {

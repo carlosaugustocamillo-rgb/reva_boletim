@@ -1,6 +1,6 @@
 
 from fastapi import FastAPI, BackgroundTasks, Request, Response
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import json
 import uuid
@@ -322,6 +322,8 @@ def iniciar_boletim(
     background_tasks: BackgroundTasks,
     resumos: bool = True,
     roteiro: bool = True,
+    revisao_roteiro: bool = True,
+    brief_spotify: bool = True,
     audio: bool = True,
     mailchimp: bool = True,
     firebase: bool = True
@@ -330,6 +332,8 @@ def iniciar_boletim(
     opcoes = {
         'resumos': resumos,
         'roteiro': roteiro,
+        'revisao_roteiro': revisao_roteiro,
+        'brief_spotify': brief_spotify,
         'audio': audio,
         'mailchimp': mailchimp,
         'firebase': firebase
@@ -423,6 +427,33 @@ async def get_ultimo_roteiro():
         conteudo = json.load(f)
         
     return {"arquivo": arquivos[0], "conteudo": conteudo}
+
+
+@app.get("/baixar-brief/{data_ref}")
+async def baixar_brief_spotify(data_ref: str):
+    """
+    Download do brief gerado para Spotify no formato brief_spotify_YYYY-MM-DD.txt
+    """
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", data_ref):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "Formato de data inválido. Use YYYY-MM-DD."}
+        )
+
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    brief_path = os.path.join(base_dir, f"brief_spotify_{data_ref}.txt")
+
+    if not os.path.exists(brief_path):
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"Brief não encontrado para {data_ref}."}
+        )
+
+    return FileResponse(
+        path=brief_path,
+        filename=f"brief_spotify_{data_ref}.txt",
+        media_type="text/plain; charset=utf-8"
+    )
 
 @app.get("/testar-firebase")
 async def start_firebase_test():
@@ -614,6 +645,8 @@ def schedule_whatsapp_message(payload: WhatsAppSchedulePayload):
 def rodar_boletim_stream(
     resumos: bool = True,
     roteiro: bool = True,
+    revisao_roteiro: bool = True,
+    brief_spotify: bool = True,
     audio: bool = True,
     mailchimp: bool = True,
     firebase: bool = True
@@ -625,6 +658,8 @@ def rodar_boletim_stream(
     opcoes = {
         'resumos': resumos,
         'roteiro': roteiro,
+        'revisao_roteiro': revisao_roteiro,
+        'brief_spotify': brief_spotify,
         'audio': audio,
         'mailchimp': mailchimp,
         'firebase': firebase

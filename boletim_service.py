@@ -24,8 +24,11 @@ OPCIONAIS:
 """
 
 import os
+import json
+import copy
 import uuid
 import textwrap
+import re
 from datetime import datetime, timedelta
 
 import pytz
@@ -382,6 +385,488 @@ Retorne APENAS um array JSON válido.
         return [{"speaker": "HOST", "text": conteudo}]
 
 
+def normalizar_dialogo(dialogo):
+    """
+    Normaliza o diálogo para o formato:
+    [{"speaker": "HOST|COHOST", "text": "..."}]
+    """
+    if isinstance(dialogo, dict):
+        dialogo = dialogo.get('dialogue', dialogo.get('dialog', dialogo.get('conversation', [])))
+
+    if not isinstance(dialogo, list):
+        return []
+
+    dialogo_normalizado = []
+    for fala in dialogo:
+        speaker = "HOST"
+        text = ""
+
+        if isinstance(fala, dict):
+            if 'text' in fala:
+                speaker = str(fala.get('speaker', 'HOST')).strip().upper()
+                text = str(fala.get('text', '')).strip()
+            elif 'HOST' in fala:
+                speaker = "HOST"
+                text = str(fala.get('HOST', '')).strip()
+            elif 'COHOST' in fala:
+                speaker = "COHOST"
+                text = str(fala.get('COHOST', '')).strip()
+        elif isinstance(fala, str):
+            text = fala.strip()
+
+        if not text:
+            continue
+
+        if speaker not in ("HOST", "COHOST"):
+            speaker = "HOST"
+
+        dialogo_normalizado.append({
+            "speaker": speaker,
+            "text": formatar_abreviacoes(text)
+        })
+
+    return dialogo_normalizado
+
+
+def parse_dialogo_json(conteudo):
+    """
+    Faz parse seguro de texto JSON retornado por LLM para diálogo de podcast.
+    """
+    if not conteudo:
+        return []
+
+    conteudo = conteudo.strip()
+    if conteudo.startswith("```"):
+        partes = conteudo.split("```")
+        if len(partes) >= 2:
+            conteudo = partes[1]
+            if conteudo.startswith("json"):
+                conteudo = conteudo[4:]
+        conteudo = conteudo.strip()
+
+    try:
+        parsed = json.loads(conteudo)
+    except Exception:
+        return []
+
+    return normalizar_dialogo(parsed)
+
+
+def parse_roteiro_completo_json(conteudo):
+    """
+    Parseia retorno JSON de revisão de ROTEIRO COMPLETO.
+    Esperado:
+    [
+      {"study_index": 1, "title": "...", "dialogue": [...]},
+      ...
+    ]
+    """
+    if not conteudo:
+        return []
+
+    conteudo = conteudo.strip()
+    if conteudo.startswith("```"):
+        partes = conteudo.split("```")
+        if len(partes) >= 2:
+            conteudo = partes[1]
+            if conteudo.startswith("json"):
+                conteudo = conteudo[4:]
+        conteudo = conteudo.strip()
+
+    try:
+        parsed = json.loads(conteudo)
+    except Exception:
+        return []
+
+    if isinstance(parsed, dict):
+        parsed = parsed.get("studies", parsed.get("roteiro", []))
+
+    if not isinstance(parsed, list):
+        return []
+
+    saida = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        dialogo = item.get("dialogue", item.get("dialogo", item.get("script", [])))
+        saida.append(normalizar_dialogo(dialogo))
+
+    return saida
+
+
+def revisar_roteiro_completo_para_podcast(roteiros_audio, titulos_estudos):
+    """
+    Etapa 8.5 revisada:
+    Lê TODO o roteiro (todos os estudos em sequência) e ajusta fluidez global,
+    principalmente as transições entre estudos.
+    """
+    roteiro_base = [normalizar_dialogo(d) for d in roteiros_audio if isinstance(d, list)]
+    if not roteiro_base:
+        return roteiro_base
+
+    payload = []
+    for idx, dialogo in enumerate(roteiro_base):
+        titulo_atual = titulos_estudos[idx] if idx < len(titulos_estudos) else f"Estudo {idx+1}"
+        proximo_titulo = (
+            titulos_estudos[idx + 1]
+            if idx + 1 < len(titulos_estudos)
+            else "Encerramento do episódio"
+        )
+        payload.append({
+            "study_index": idx + 1,
+            "title": titulo_atual,
+            "next_title": proximo_titulo,
+            "dialogue": dialogo
+        })
+
+    prompt = f"""
+Você é um roteirista profissional especializado em podcasts científicos conversacionais.
+
+Vou te fornecer o roteiro gerado na ETAPA 8 (todos os estudos em sequência). Sua tarefa é produzir a ETAPA 8.5:
+refinar o texto para fluidez, transições, ritmo e naturalidade, sem alterar o conteúdo científico.
+
+REGRAS CLARAS:
+1) NÃO resuma e NÃO remova fatos, números, resultados ou conclusões.
+2) NÃO invente novas evidências e NÃO adicione dados.
+3) NÃO use frases mecânicas de relatório, por exemplo:
+   - "E no próximo estudo a gente discute..."
+   - "O título é..."
+   - "O objetivo foi..."
+   - "Eles fizeram uma busca de..."
+4) Reescreva em tom de conversa real de podcast:
+   - reações contextualizadas,
+   - perguntas naturais,
+   - pausas conceituais curtas ("isso importa porque...", "olha que ponto..."),
+   - transições temáticas orgânicas e variadas.
+5) Transições entre estudos devem ser coerentes com `next_title`, sem citar tema fora do estudo atual e do próximo.
+6) Tom profissional, educativo e conversacional (sem academicismo duro e sem informalidade excessiva).
+7) No estudo final, manter encerramento caloroso de podcast.
+8) Não use cabeçalhos dentro das falas; a conversa deve soar contínua.
+9) Manter ORDEM e QUANTIDADE de estudos.
+
+FORMATO DE SAÍDA (OBRIGATÓRIO):
+Retorne SOMENTE JSON válido:
+[
+  {{
+    "study_index": 1,
+    "title": "...",
+    "dialogue": [{{"speaker":"HOST","text":"..."}},{{"speaker":"COHOST","text":"..."}}]
+  }}
+]
+
+Roteiro ETAPA 8 para revisar:
+{json.dumps(payload, ensure_ascii=False, indent=2)}
+"""
+
+    # 1) Tenta Gemini
+    if GEMINI_API_KEY:
+        try:
+            model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+            resposta = model.generate_content(prompt)
+            revisado = parse_roteiro_completo_json(getattr(resposta, "text", ""))
+            if len(revisado) == len(roteiro_base):
+                return revisado
+            print("⚠️ Revisão completa Gemini inválida/incompleta. Tentando OpenAI...")
+        except Exception as e:
+            print(f"⚠️ Erro Gemini na revisão completa: {e}. Tentando fallback OpenAI...")
+
+    # 2) Fallback OpenAI
+    try:
+        resposta = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Você revisa roteiros completos de podcast científico sem alucinar. "
+                        "Retorne somente JSON válido."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.3,
+        )
+        conteudo = resposta.choices[0].message.content.strip()
+        revisado = parse_roteiro_completo_json(conteudo)
+        if len(revisado) == len(roteiro_base):
+            return revisado
+        print("⚠️ Revisão completa OpenAI inválida/incompleta. Mantendo roteiro original.")
+    except Exception as e:
+        print(f"⚠️ Erro OpenAI na revisão completa: {e}. Mantendo roteiro original.")
+
+    return roteiro_base
+
+
+def _strip_code_fence(texto):
+    if not texto:
+        return ""
+    saida = texto.strip()
+    if saida.startswith("```"):
+        partes = saida.split("```")
+        if len(partes) >= 2:
+            saida = partes[1]
+            if saida.startswith("text"):
+                saida = saida[4:]
+            elif saida.startswith("markdown"):
+                saida = saida[8:]
+    return saida.strip()
+
+
+def _roteiro_para_texto_continuo(roteiros_audio):
+    linhas = []
+    for dialogo in roteiros_audio or []:
+        for fala in normalizar_dialogo(dialogo):
+            speaker = fala.get("speaker", "HOST")
+            texto = (fala.get("text") or "").strip()
+            if texto:
+                linhas.append(f"{speaker}: {texto}")
+    return "\n".join(linhas)
+
+
+def _brief_spotify_fallback(titulos_estudos, data_ref):
+    linhas = [
+        f"Neste episódio do RevaCast Weekly ({data_ref}), Ivo e Manu discutem as evidências mais recentes em oncologia com foco em intervenções não farmacológicas, reabilitação e qualidade de vida.",
+        "",
+        "Os temas abordados incluem:"
+    ]
+    for titulo in titulos_estudos[:8]:
+        linhas.append(f"- {titulo}")
+    linhas.extend([
+        "",
+        "Um episódio com leitura crítica da evidência e foco em aplicabilidade clínica no cuidado centrado no paciente."
+    ])
+    return "\n".join(linhas)
+
+
+def gerar_brief_spotify(roteiros_audio, titulos_estudos, data_ref):
+    """
+    Gera um brief/resumo do episódio para descrição no Spotify.
+    Usa Gemini primeiro e OpenAI como fallback.
+    """
+    roteiro_texto = _roteiro_para_texto_continuo(roteiros_audio)
+    if not roteiro_texto.strip():
+        return ""
+
+    prompt = f"""
+Você é editor de texto para podcasts científicos em português.
+
+Tarefa:
+Produza um resumo/brief para descrição de episódio no Spotify com base EXCLUSIVA no roteiro abaixo.
+
+Regras:
+1) Não invente dados, números, desfechos ou conclusões.
+2) Não remova os principais achados científicos discutidos.
+3) Mantenha tom profissional, educativo e conversacional.
+4) Estrutura desejada:
+   - 1 parágrafo de abertura (2 a 4 frases).
+   - Bloco "Entre os destaques da semana:" com bullets curtos (1 por estudo).
+   - 1 fechamento curto convidando a ouvir o episódio.
+5) Não usar tabelas, não usar JSON e não usar cabeçalhos técnicos.
+6) Texto final em português do Brasil, pronto para colar no Spotify.
+
+Data de referência: {data_ref}
+Títulos dos estudos:
+{json.dumps(titulos_estudos, ensure_ascii=False, indent=2)}
+
+Roteiro do episódio:
+{roteiro_texto}
+"""
+
+    # 1) Gemini
+    if GEMINI_API_KEY:
+        try:
+            model = genai.GenerativeModel("gemini-2.5-flash-preview-09-2025")
+            resposta = model.generate_content(prompt)
+            texto = _strip_code_fence(getattr(resposta, "text", ""))
+            if len(texto) >= 180:
+                return texto
+            print("⚠️ Brief Spotify Gemini curto/inválido. Tentando OpenAI...")
+        except Exception as e:
+            print(f"⚠️ Erro Gemini ao gerar brief Spotify: {e}. Tentando OpenAI...")
+
+    # 2) OpenAI
+    try:
+        resposta = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Você escreve descrições de episódios científicos para Spotify sem alucinar.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.35,
+        )
+        texto = _strip_code_fence(resposta.choices[0].message.content.strip())
+        if len(texto) >= 180:
+            return texto
+        print("⚠️ Brief Spotify OpenAI curto/inválido. Usando fallback local.")
+    except Exception as e:
+        print(f"⚠️ Erro OpenAI ao gerar brief Spotify: {e}. Usando fallback local.")
+
+    return _brief_spotify_fallback(titulos_estudos=titulos_estudos, data_ref=data_ref)
+
+
+def _eh_fala_transicao(texto):
+    if not texto:
+        return False
+    t = texto.lower()
+    pistas = [
+        "próximo estudo", "proximo estudo", "no próximo", "no proximo",
+        "a seguir", "vamos para", "vamos pro", "vamos ao próximo", "vamos ao proximo",
+        "próximo tema", "proximo tema", "puxando esse fio", "na sequência",
+        "na sequencia", "gancho natural", "abre caminho", "próximo bloco",
+        "proximo bloco", "vamos ver o próximo artigo", "vamos ver o proximo artigo"
+    ]
+    return any(p in t for p in pistas)
+
+
+def _eh_transicao_mecanica(texto):
+    if not texto:
+        return False
+    t = texto.lower()
+    mecanicas = [
+        "e no próximo estudo a gente discute",
+        "e no proximo estudo a gente discute",
+        "o título é",
+        "o titulo é",
+        "o objetivo foi",
+        "eles fizeram uma busca de",
+    ]
+    return any(m in t for m in mecanicas)
+
+
+def _resumir_titulo_para_transicao(titulo):
+    t = " ".join((titulo or "").split()).strip().strip(".")
+    if not t:
+        return "o próximo estudo"
+    if ":" in t:
+        t = t.split(":", 1)[0].strip()
+    if len(t) > 110:
+        t = t[:107].rstrip(" ,;:-") + "..."
+    return t
+
+
+def _tema_pt_do_titulo(titulo):
+    t = (titulo or "").lower()
+
+    if "peripheral neuropathy" in t or "chemotherapy-induced" in t:
+        return "neuropatia periférica induzida por quimioterapia"
+    if "advanced lung cancer" in t:
+        return "exercício em pessoas com câncer de pulmão avançado"
+    if "social support" in t or "older adult survivors of cancer" in t:
+        return "apoio social ao exercício em sobreviventes de câncer mais velhos"
+    if "pilates" in t and "dance" in t:
+        return "pilates e dança na funcionalidade de membros superiores após cirurgia de câncer de mama"
+    if "badunjin" in t or "baduanjin" in t:
+        return "efeitos do Badunjin sentado no manejo da carga de sintomas"
+
+    titulo_curto = _resumir_titulo_para_transicao(titulo)
+    return titulo_curto[0].lower() + titulo_curto[1:] if titulo_curto else "o próximo tema"
+
+
+def _construir_transicao_organica(proximo_titulo, idx):
+    tema = _tema_pt_do_titulo(proximo_titulo).strip().rstrip(".")
+    templates = [
+        "Isso conversa diretamente com o próximo tema: {tema}.",
+        "Puxando esse fio, a gente entra agora em {tema}.",
+        "Na sequência, o foco passa para {tema}.",
+        "E tem um gancho natural aqui para o que vem agora: {tema}.",
+        "Esse ponto abre caminho para o próximo bloco, sobre {tema}.",
+    ]
+    tpl = templates[idx % len(templates)]
+    return tpl.format(tema=tema)
+
+
+def suavizar_frases_mecanicas(roteiros_audio):
+    """
+    Suaviza frases de relatório que possam escapar da revisão LLM.
+    """
+    if not roteiros_audio:
+        return roteiros_audio
+
+    regras = [
+        (r"^\s*O objetivo foi\b", "A pergunta central desse estudo foi"),
+        (r"^\s*Eles fizeram uma busca de\b", "Eles fizeram uma varredura de"),
+        (r"^\s*O título é\b", "Esse estudo se chama"),
+    ]
+
+    saida = copy.deepcopy(roteiros_audio)
+    for i, dialogo in enumerate(saida):
+        dialogo_novo = []
+        for fala in normalizar_dialogo(dialogo):
+            txt = fala.get("text", "")
+            for padrao, repl in regras:
+                txt = re.sub(padrao, repl, txt, flags=re.IGNORECASE)
+            dialogo_novo.append({"speaker": fala.get("speaker", "HOST"), "text": txt})
+        saida[i] = dialogo_novo
+    return saida
+
+
+def forcar_transicoes_ancoradas_no_proximo_titulo(roteiros_audio, titulos_estudos):
+    """
+    Ajuste de segurança pós-LLM:
+    garante que cada transição entre estudos aponte para o título real do próximo estudo.
+    """
+    if not roteiros_audio:
+        return roteiros_audio
+
+    resultado = copy.deepcopy(roteiros_audio)
+    for idx in range(len(resultado) - 1):
+        dialogo = normalizar_dialogo(resultado[idx])
+        proximo_titulo = titulos_estudos[idx + 1] if idx + 1 < len(titulos_estudos) else "o próximo estudo"
+        texto_transicao = _construir_transicao_organica(proximo_titulo, idx)
+
+        # Remove transições redundantes ou mecânicas no fim do estudo (HOST/COHOST)
+        indices_transicao = []
+        for j in range(len(dialogo) - 1, max(-1, len(dialogo) - 8), -1):
+            if j >= 0 and (_eh_fala_transicao(dialogo[j].get("text", "")) or _eh_transicao_mecanica(dialogo[j].get("text", ""))):
+                indices_transicao.append(j)
+
+        # Mantém só uma transição final e orgânica
+        for j in sorted(indices_transicao, reverse=True):
+            if j >= 0:
+                dialogo.pop(j)
+
+        # Adiciona uma única transição final, sempre no HOST (curta e temática)
+        # Só adiciona se não for idêntica à última fala HOST já existente.
+        ultima_host = ""
+        for fala in reversed(dialogo):
+            if fala.get("speaker") == "HOST":
+                ultima_host = (fala.get("text") or "").strip()
+                break
+        if ultima_host != texto_transicao.strip():
+            dialogo.append({"speaker": "HOST", "text": texto_transicao})
+
+        # Segurança extra: remove duplicidade consecutiva idêntica no final.
+        if len(dialogo) >= 2:
+            a = dialogo[-1]
+            b = dialogo[-2]
+            if (
+                a.get("speaker") == b.get("speaker") == "HOST"
+                and (a.get("text") or "").strip() == (b.get("text") or "").strip()
+            ):
+                dialogo.pop()
+
+        resultado[idx] = normalizar_dialogo(dialogo)
+
+    return resultado
+
+
+def salvar_roteiro_txt(caminho, roteiros_audio, titulo):
+    """Salva roteiro em formato texto legível."""
+    with open(caminho, "w", encoding="utf-8") as f:
+        f.write(f"{titulo}\n")
+        f.write("=" * 60 + "\n\n")
+        for estudo_idx, dialogo in enumerate(roteiros_audio):
+            f.write(f"\n{'='*60}\nESTUDO {estudo_idx + 1}\n{'='*60}\n\n")
+            if isinstance(dialogo, list):
+                for fala in dialogo:
+                    f.write(f"{fala.get('speaker')}: {fala.get('text')}\n\n")
+            else:
+                f.write(f"HOST: {dialogo}\n\n")
+
+
 def formatar_abreviacoes(texto):
     """
     Formata abreviações comuns adicionando pontos entre as letras
@@ -667,6 +1152,8 @@ def rodar_boletim(opcoes=None):
     opcoes: dict com chaves booleanas:
       - 'resumos': Busca artigos e gera textos (Principal e Detalhado)
       - 'roteiro': Gera o roteiro do podcast (texto)
+      - 'revisao_roteiro': Revisa fluidez do roteiro (etapa 8.5)
+      - 'brief_spotify': Gera resumo final para descrição do episódio no Spotify
       - 'audio': Gera o áudio (ElevenLabs)
       - 'mailchimp': Cria e agenda campanha
       - 'firebase': Upload e RSS
@@ -675,6 +1162,8 @@ def rodar_boletim(opcoes=None):
         opcoes = {
             'resumos': True,
             'roteiro': True,
+            'revisao_roteiro': True,
+            'brief_spotify': True,
             'audio': True,
             'mailchimp': True,
             'firebase': True
@@ -692,6 +1181,7 @@ def rodar_boletim(opcoes=None):
     base_episodio_name = f"episodio_boletim_{hoje}"
     episodio_filename = f"{base_episodio_name}.mp3"
     episodio_path = os.path.join(AUDIO_DIR, episodio_filename) # Usando AUDIO_DIR para manter organizado
+    brief_spotify_path = os.path.join(BASE_DIR, f"brief_spotify_{hoje}.txt")
     if not os.path.exists(AUDIO_DIR): os.makedirs(AUDIO_DIR, exist_ok=True)
     
     # Versionamento: se já existe, cria _1, _2...
@@ -703,6 +1193,10 @@ def rodar_boletim(opcoes=None):
 
     # Variáveis de estado para passar entre etapas
     roteiros_audio = []
+    roteiros_audio_original = []
+    titulos_podcast = []
+    brief_spotify_text = ""
+    total_chars_elevenlabs = 0
     
     # ------------------------------------------------------------------
     # 1) BOLETIM PRINCIPAL & DETALHADO (RESUMOS)
@@ -961,6 +1455,7 @@ def rodar_boletim(opcoes=None):
                 artigos_podcast = todos_artigos_relevantes[:3]
 
             roteiros_audio = []
+            titulos_podcast = []
             if artigos_podcast:
                 yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos selecionados..."
                 
@@ -978,29 +1473,73 @@ def rodar_boletim(opcoes=None):
                         idx=idx,
                         is_last=is_last
                     )
-                    roteiros_audio.append(dialogo)
+                    roteiros_audio.append(normalizar_dialogo(dialogo))
+                    titulos_podcast.append(art.get('titulo', f'Estudo {idx+1}'))
+
+            # Guarda versão da etapa 8 (antes da revisão de fluidez)
+            roteiros_audio_original = copy.deepcopy(roteiros_audio)
+
+            # ------------------------------------------------------------------
+            # 8.5) REVISÃO DE FLUIDEZ DO ROTEIRO (GEMINI/OPENAI)
+            # ------------------------------------------------------------------
+            if roteiros_audio and opcoes.get('revisao_roteiro', True):
+                yield "🧠 2.5/5: Revisando roteiro COMPLETO para soar mais podcast..."
+                roteiros_audio = revisar_roteiro_completo_para_podcast(
+                    roteiros_audio=roteiros_audio,
+                    titulos_estudos=titulos_podcast
+                )
+                yield "🧹 Suavizando frases mecânicas residuais..."
+                roteiros_audio = suavizar_frases_mecanicas(roteiros_audio)
+                yield "🧭 Ajustando transições orgânicas entre estudos..."
+                roteiros_audio = forcar_transicoes_ancoradas_no_proximo_titulo(
+                    roteiros_audio=roteiros_audio,
+                    titulos_estudos=titulos_podcast
+                )
+            elif roteiros_audio:
+                yield "⏭️ Etapa 8.5 desativada (usando roteiro bruto da etapa 8)."
+
+            # Salva TXT original (etapa 8) e revisado (etapa 8.5)
+            roteiro_original_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_original.txt")
+            roteiro_revisado_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_5_revisado.txt")
+
+            salvar_roteiro_txt(
+                caminho=roteiro_original_txt,
+                roteiros_audio=roteiros_audio_original,
+                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8 - ORIGINAL)"
+            )
+            salvar_roteiro_txt(
+                caminho=roteiro_revisado_txt,
+                roteiros_audio=roteiros_audio,
+                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8.5 - REVISADO)"
+            )
+
+            # Mantém compatibilidade: arquivo "roteiro_path" sempre recebe a versão revisada (8.5)
+            salvar_roteiro_txt(
+                caminho=roteiro_path,
+                roteiros_audio=roteiros_audio,
+                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly"
+            )
+            print(f"✅ Roteiro etapa 8 salvo em: {roteiro_original_txt}")
+            print(f"✅ Roteiro etapa 8.5 salvo em: {roteiro_revisado_txt}")
+            print(f"✅ Roteiro ativo para áudio salvo em: {roteiro_path}")
             
-            # Salva o roteiro
-            with open(roteiro_path, "w", encoding="utf-8") as f:
-                f.write("ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly\n")
-                f.write("=" * 60 + "\n\n")
-                for estudo_idx, dialogo in enumerate(roteiros_audio):
-                    f.write(f"\n{'='*60}\nESTUDO {estudo_idx + 1}\n{'='*60}\n\n")
-                    if isinstance(dialogo, list):
-                        for fala in dialogo:
-                            f.write(f"{fala.get('speaker')}: {fala.get('text')}\n\n")
-                    else:
-                        f.write(f"HOST: {dialogo}\n\n")
-            print(f"✅ Roteiro completo salvo como: {roteiro_path}")
-            
-            # Salva também em JSON estruturado para permitir reuso (ex: Firebase ou edição futura)
-            import json
-            roteiro_json_path = os.path.join(BASE_DIR, "roteiros", f"roteiro_estruturado_{hoje}.json")
+            # Salva também em JSON estruturado (etapa 8, etapa 8.5 e alias compatível)
+            roteiro_json_dir = os.path.join(BASE_DIR, "roteiros")
+            roteiro_json_path = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}.json")
+            roteiro_json_etapa8 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8.json")
+            roteiro_json_etapa85 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8_5.json")
             try:
-                os.makedirs(os.path.dirname(roteiro_json_path), exist_ok=True)
+                os.makedirs(roteiro_json_dir, exist_ok=True)
+                with open(roteiro_json_etapa8, "w", encoding="utf-8") as f:
+                    json.dump(roteiros_audio_original, f, indent=2, ensure_ascii=False)
+                with open(roteiro_json_etapa85, "w", encoding="utf-8") as f:
+                    json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
                 with open(roteiro_json_path, "w", encoding="utf-8") as f:
                     json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
-                print(f"✅ Roteiro JSON salvo em: {roteiro_json_path}")
+
+                print(f"✅ Roteiro JSON etapa 8 salvo em: {roteiro_json_etapa8}")
+                print(f"✅ Roteiro JSON etapa 8.5 salvo em: {roteiro_json_etapa85}")
+                print(f"✅ Roteiro JSON ativo salvo em: {roteiro_json_path}")
                 
                 # Upload para Firestore se habilitado
                 if opcoes.get('firebase'):
@@ -1008,12 +1547,30 @@ def rodar_boletim(opcoes=None):
                     doc_data = {
                         "date": hoje,
                         "script": roteiros_audio,
+                        "script_original": roteiros_audio_original,
                         "created_at": datetime.now().isoformat()
                     }
                     save_firestore_document("roteiros", f"roteiro_{hoje}", doc_data)
                     
             except Exception as e:
                 print(f"❌ Erro ao salvar JSON do roteiro: {e}")
+
+            if roteiros_audio and opcoes.get('brief_spotify', True):
+                yield "🧾 2.8/5: Gerando brief do episódio para Spotify..."
+                brief_spotify_text = gerar_brief_spotify(
+                    roteiros_audio=roteiros_audio,
+                    titulos_estudos=titulos_podcast,
+                    data_ref=hoje
+                ).strip()
+
+                if brief_spotify_text:
+                    with open(brief_spotify_path, "w", encoding="utf-8") as f:
+                        f.write(f"Resumo Spotify - RevaCast Weekly ({hoje})\n")
+                        f.write("=" * 50 + "\n\n")
+                        f.write(brief_spotify_text + "\n")
+                    yield f"✅ Brief Spotify salvo: {brief_spotify_path}"
+                else:
+                    yield "⚠️ Brief Spotify não foi gerado (texto vazio)."
         else:
             yield "⏭️ Pulando geração de Roteiro."
 
@@ -1424,6 +1981,9 @@ def rodar_boletim(opcoes=None):
         "data_referencia": hoje,
         "boletim_path": boletim_path,
         "episodio_path": episodio_path,
+        "brief_spotify_path": brief_spotify_path if os.path.exists(brief_spotify_path) else None,
+        "brief_spotify_text": brief_spotify_text if brief_spotify_text else None,
+        "brief_spotify_download_url": f"/baixar-brief/{hoje}" if os.path.exists(brief_spotify_path) else None,
         "audio_url": audio_url,
         "rss_url": rss_url,
         "mailchimp": {"status": mailchimp_status, "error": mailchimp_error},
