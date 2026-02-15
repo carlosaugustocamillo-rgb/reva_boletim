@@ -27,6 +27,8 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3-pro-preview")
+GEMINI_IMAGE_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
 
 # Configuração Mailchimp
 mc = MailchimpMarketing.Client()
@@ -101,7 +103,7 @@ def generate_search_keywords(tema):
     Essas keywords serão usadas para filtrar resultados irrelevantes.
     """
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
         prompt = (
             f"Analyze the medical topic: '{tema}'. "
             "Return a Python list of strings with 3 to 5 ESSENTIAL English keywords (single words or short bi-grams) "
@@ -253,7 +255,7 @@ def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename
     
     # Tenta Gemini
     try:
-        model = genai.GenerativeModel('gemini-3-pro-image-preview')
+        model = genai.GenerativeModel(GEMINI_IMAGE_MODEL)
         response = model.generate_content("Generate an image of: " + prompt)
         for part in response.parts:
             if hasattr(part, 'inline_data') and part.inline_data:
@@ -450,7 +452,7 @@ def gerar_conteudo_revamais(tema, referencias):
     """
     
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
         response = model.generate_content(prompt)
         html_content = response.text
     except:
@@ -616,7 +618,7 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
     try:
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
         
         if formato.lower() == "reel":
             # (Mantido igual - omitido para brevidade, mas deve existir no arquivo final)
@@ -801,7 +803,7 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     # 1. Traduzir tema para keywords científicas
     try:
         log("🌍 Traduzindo tema para keywords científicas...")
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
         # Prompt otimizado para gerar query booleana específica
         prompt_query = (
             f"Create a specific PubMed Search Query for the topic: '{tema}'. "
