@@ -1082,6 +1082,30 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     # Backward compatibility: mantém url_corpo como a imagem científica
     url_corpo = url_corpo_ciencia
 
+    # Conteúdo para site: garante bloco final de referências (sem alterar html_full do Mailchimp).
+    refs_items_site = (
+        "".join([
+            f"<li>{r['texto']} <a href='{r['link']}' target='_blank'>[PubMed]</a></li>"
+            for r in referencias
+        ])
+        if referencias
+        else "<li>Referências não disponíveis neste momento.</li>"
+    )
+
+    bloco_referencias_site = f"""
+    <div class="references" style="margin-top:30px;padding-top:20px;border-top:1px solid #eee;">
+        <h3>📚 Referências Científicas Utilizadas:</h3>
+        <ul>
+            {refs_items_site}
+        </ul>
+    </div>
+    """
+
+    html_content_site = html_texto
+    html_lower = html_texto.lower()
+    if "referências científicas utilizadas" not in html_lower and "referencias cientificas utilizadas" not in html_lower:
+        html_content_site = html_texto + bloco_referencias_site
+
     return {
         "status": "success", 
         "campaign_id": campaign['id'], 
@@ -1095,7 +1119,7 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
         "instagram_format": formato_instagram,
         # Campos para Publicação no Site (Novos)
         "titulo": tema,
-        "html_content": html_texto, # Conteúdo interno (puro) para Blog
+        "html_content": html_content_site, # Conteúdo para Blog com bloco final de referências
         "html_full": html_email,    # Email completo (para histórico/preview)
         "data_publicacao": delivery_date_formatted,
         "data_iso": schedule_str
