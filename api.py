@@ -9,7 +9,7 @@ from boletim_service import rodar_boletim
 from campanha_service import criar_campanha_tematica
 from revamais_service import criar_campanha_revamais
 from simple_agent import run_agent, AgentInput
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import firebase_admin
 from firebase_admin import credentials, storage
 from datetime import datetime
@@ -21,8 +21,23 @@ def simple_slugify(text):
     text = re.sub(r'[\s_-]+', '-', text)
     return text
 
+
+def model_to_dict(model):
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
 class CampanhaInput(BaseModel):
     tema: str = ""
+
+
+class ReferenciaSelecionadaInput(BaseModel):
+    pmid: str | None = None
+    texto: str
+    link: str
+    resumo: str = ""
+    jif: float = 0.0
+    journal: str = ""
 
 class NewsPayload(BaseModel):
     titulo: str
@@ -164,6 +179,7 @@ def processar_revamais_background(task_id: str, opcoes: dict):
             gerar_midia=opcoes.get("gerar_midia", True),
             gerar_instagram=opcoes.get("gerar_instagram", True),
             enviar_email=opcoes.get("enviar_email", True),
+            referencias_selecionadas=opcoes.get("referencias_selecionadas", []),
             log_callback=log_callback,
             check_cancel=check_cancel
         )
@@ -356,6 +372,12 @@ class RevaMaisInput(BaseModel):
     gerar_midia: bool = True
     gerar_instagram: bool = True
     enviar_email: bool = True
+    referencias_selecionadas: list[ReferenciaSelecionadaInput] = Field(default_factory=list)
+
+
+class RevaMaisPrepareInput(BaseModel):
+    tema: str = ""
+    quantidade_referencias: int = 8
 
 @app.post("/iniciar-revamais")
 def iniciar_revamais(
@@ -373,7 +395,8 @@ def iniciar_revamais(
             "tema_usuario": input_data.tema,
             "gerar_midia": input_data.gerar_midia,
             "gerar_instagram": input_data.gerar_instagram,
-            "enviar_email": input_data.enviar_email
+            "enviar_email": input_data.enviar_email,
+            "referencias_selecionadas": [model_to_dict(ref) for ref in input_data.referencias_selecionadas],
         }
         
         background_tasks.add_task(processar_revamais_background, task_id, opcoes)
@@ -395,10 +418,32 @@ def iniciar_revamais(
                 "traceback": traceback.format_exc()
             }
         )
-    
+
 @app.post("/cancelar-tarefa/{task_id}")
 def cancelar_tarefa_generica(task_id: str):
     return cancelar_boletim(task_id) # Reutiliza a mesma lógica
+
+
+@app.post("/preparar-revamais")
+def preparar_revamais_endpoint(input_data: RevaMaisPrepareInput):
+    """
+    Resolve o tema e retorna os artigos candidatos para curadoria manual
+    antes da geração final do Reva+.
+    """
+    try:
+        from revamais_service import preparar_referencias_revamais
+
+        resultado = preparar_referencias_revamais(
+            tema_usuario=input_data.tema,
+            quantidade_referencias=input_data.quantidade_referencias,
+        )
+
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
 
 @app.get("/status-boletim/{task_id}")
 async def status_boletim(task_id: str):
@@ -503,14 +548,20 @@ def endpoint_remixar_audio():
         return {"success": False, "error": str(e)}
 
 @app.post("/criar-revamais")
-def criar_revamais_endpoint(input_data: CampanhaInput):
+def criar_revamais_endpoint(input_data: RevaMaisInput):
     """
     Cria uma edição do Reva + (newsletter temática).
     """
     print(f"🔎 DEBUG: Request recebido no endpoint /criar-revamais. Tema: {input_data.tema}")
     try:
         from revamais_service import criar_campanha_revamais
-        resultado = criar_campanha_revamais(input_data.tema)
+        resultado = criar_campanha_revamais(
+            tema_usuario=input_data.tema,
+            gerar_midia=input_data.gerar_midia,
+            gerar_instagram=input_data.gerar_instagram,
+            enviar_email=input_data.enviar_email,
+            referencias_selecionadas=[model_to_dict(ref) for ref in input_data.referencias_selecionadas],
+        )
         
         # Força Header CORS manual (Cinto e Suspensórios)
         response = JSONResponse(content={"success": True, "resultado": resultado})

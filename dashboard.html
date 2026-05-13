@@ -274,7 +274,7 @@
             style="text-align: left; margin-bottom: 20px; background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e9ecef;">
             <strong style="display:block; margin-bottom:10px; color:#6f42c1;">O que gerar?</strong>
             <label style="display: inline-block; margin-right: 15px; cursor: pointer;">
-                <input type="checkbox" id="revamais_img" checked> 🖼️ Imagens (DALL-E)
+                <input type="checkbox" id="revamais_img" checked> 🖼️ Imagens
             </label>
             <label style="display: inline-block; margin-right: 15px; cursor: pointer;">
                 <input type="checkbox" id="revamais_insta" checked> 📸 Instagram
@@ -282,6 +282,14 @@
             <label style="display: inline-block; cursor: pointer;">
                 <input type="checkbox" id="revamais_email" checked> 📧 Email (Mailchimp)
             </label>
+        </div>
+
+        <button id="btnBuscarRevaRefs" onclick="buscarArtigosRevaMais()" style="background-color: #17a2b8; margin-bottom: 10px;">
+            🔎 Buscar Artigos para Curadoria
+        </button>
+
+        <div id="revamaisArticlePicker"
+            style="display:none; text-align:left; margin-bottom:20px; background:#fff; padding:15px; border-radius:8px; border:1px solid #d9d9e3;">
         </div>
 
         <button id="btnReva" onclick="criarRevaMais()" style="background-color: #6f42c1;">
@@ -336,6 +344,127 @@
         }
 
         let lastRevaMaisResult = null;
+        let lastRevaMaisReferences = [];
+
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            return String(text)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function getSelectedRevaMaisReferences() {
+            const selected = [];
+            document.querySelectorAll('.revamais-ref-checkbox:checked').forEach(el => {
+                const index = Number(el.dataset.index);
+                if (!Number.isNaN(index) && lastRevaMaisReferences[index]) {
+                    selected.push(lastRevaMaisReferences[index]);
+                }
+            });
+            return selected;
+        }
+
+        function renderRevaMaisReferences(result) {
+            const picker = document.getElementById('revamaisArticlePicker');
+            const temaInput = document.getElementById('temaReva');
+            const referencias = result.referencias_sugeridas || [];
+
+            lastRevaMaisReferences = referencias;
+
+            if (!temaInput.value.trim() && result.tema) {
+                temaInput.value = result.tema;
+            }
+
+            if (!referencias.length) {
+                picker.style.display = 'block';
+                picker.innerHTML = `
+                    <strong style="color:#6f42c1;">Curadoria de Artigos</strong>
+                    <p style="margin:10px 0 0 0;">Nenhum artigo candidato foi encontrado para <b>${escapeHtml(result.tema || '')}</b>.</p>
+                `;
+                return;
+            }
+
+            const refsHtml = referencias.map((ref, index) => `
+                <label style="display:block; margin:12px 0; padding:12px; border:1px solid #e5e5ef; border-radius:8px; background:#fafafa;">
+                    <div style="display:flex; align-items:flex-start; gap:10px;">
+                        <input type="checkbox" class="revamais-ref-checkbox" data-index="${index}" ${index < 3 ? 'checked' : ''} style="margin-top:4px;">
+                        <div>
+                            <div style="font-weight:bold; color:#205776;">${index + 1}. ${escapeHtml(ref.texto || 'Sem título')}</div>
+                            <div style="font-size:12px; color:#666; margin:4px 0;">
+                                PMID: ${escapeHtml(ref.pmid || '-')} | JIF: ${(ref.jif || 0).toFixed(1)} | Journal: ${escapeHtml(ref.journal || '-')}
+                            </div>
+                            <div style="font-size:13px; color:#444; line-height:1.45;">
+                                ${escapeHtml((ref.resumo || 'Resumo não disponível.').slice(0, 700))}${(ref.resumo || '').length > 700 ? '...' : ''}
+                            </div>
+                            <div style="margin-top:8px;">
+                                <a href="${ref.link}" target="_blank" style="font-size:12px;">Abrir no PubMed</a>
+                            </div>
+                        </div>
+                    </div>
+                </label>
+            `).join('');
+
+            picker.style.display = 'block';
+            picker.innerHTML = `
+                <strong style="display:block; color:#6f42c1; margin-bottom:8px;">Curadoria de Artigos</strong>
+                <div style="font-size:13px; color:#555; margin-bottom:10px;">
+                    Tema resolvido: <b>${escapeHtml(result.tema || '')}</b><br>
+                    Query científica: <code>${escapeHtml(result.tema_ingles || '')}</code><br>
+                    Modelo de busca/preparo: <code>${escapeHtml(result.modelo_texto_busca || '')}</code><br>
+                    Modelo de redação final: <code>${escapeHtml(result.modelo_texto_redacao || '')}</code>
+                </div>
+                <div style="font-size:13px; color:#555; margin-bottom:10px;">
+                    Selecione os artigos que devem entrar no boletim. Os 3 primeiros vêm marcados por padrão.
+                </div>
+                ${refsHtml}
+            `;
+        }
+
+        async function buscarArtigosRevaMais() {
+            const btn = document.getElementById('btnBuscarRevaRefs');
+            const statusDiv = document.getElementById('statusReva');
+            const tema = document.getElementById('temaReva').value.trim();
+
+            btn.disabled = true;
+            btn.innerHTML = 'Buscando artigos...';
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Buscando artigos candidatos...</div>';
+
+            try {
+                const response = await fetch('/preparar-revamais', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tema: tema,
+                        quantidade_referencias: 8
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.erro || 'Erro ao preparar referências');
+                }
+
+                if (data.resultado.status === 'error') {
+                    throw new Error(data.resultado.message || 'Erro ao preparar referências');
+                }
+
+                renderRevaMaisReferences(data.resultado);
+                statusDiv.className = 'success';
+                statusDiv.innerHTML = `✅ <strong>Referências preparadas.</strong><br>Revise os artigos e então clique em <b>Criar Reva +</b>.`;
+            } catch (error) {
+                console.error(error);
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '🔎 Buscar Artigos para Curadoria';
+            }
+        }
 
         async function publicarNoticiaFromGlobal() {
             if (!lastRevaMaisResult) {
@@ -864,11 +993,20 @@
             const statusDiv = document.getElementById('statusReva');
             const temaInput = document.getElementById('temaReva');
             const tema = temaInput.value.trim(); // Pode ser vazio
+            const picker = document.getElementById('revamaisArticlePicker');
 
             // Opções
             const gerar_midia = document.getElementById('revamais_img').checked;
             const gerar_instagram = document.getElementById('revamais_insta').checked;
             const enviar_email = document.getElementById('revamais_email').checked;
+            const referencias_selecionadas = getSelectedRevaMaisReferences();
+
+            if (picker.style.display !== 'none' && lastRevaMaisReferences.length > 0 && referencias_selecionadas.length === 0) {
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Seleção vazia:</strong><br>Marque ao menos um artigo antes de gerar o Reva+.';
+                return;
+            }
 
             // Estado de carregamento
             btn.disabled = true;
@@ -885,7 +1023,8 @@
                         tema: tema,
                         gerar_midia: gerar_midia,
                         gerar_instagram: gerar_instagram,
-                        enviar_email: enviar_email
+                        enviar_email: enviar_email,
+                        referencias_selecionadas: referencias_selecionadas
                     })
                 });
 
@@ -933,7 +1072,10 @@
 
                     statusDiv.innerHTML = `
                                                 ✅ <strong>Sucesso!</strong><br>
-                                                    Tema: <b>${res.tema || tema}</b><br>
+                                                        Tema: <b>${res.tema || tema}</b><br>
+                                                        Modelo de busca/preparo: <code>${res.modelo_texto_busca || '-'}</code><br>
+                                                        Modelo de redação: <code>${res.modelo_texto_redacao || '-'}</code><br>
+                                                        Artigos utilizados: ${res.referencias_utilizadas ? res.referencias_utilizadas.length : 0}<br>
                                                         Mailchimp ID: ${res.campaign_id}<br>
                                                             Custo Estimado: R$ ${res.custo_estimado.brl.toFixed(2)}<br>
                                                             <div style="margin-top: 15px; padding: 10px; background-color: #e3f2fd; border-radius: 8px;">

@@ -22,6 +22,9 @@ load_dotenv()
 Entrez.email = os.environ.get("ENTREZ_EMAIL")
 Entrez.api_key = os.environ.get("ENTREZ_API_KEY")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+OPENAI_TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL", "gpt-5.5")
+OPENAI_TEXT_MODEL_SEARCH = os.environ.get("OPENAI_TEXT_MODEL_SEARCH", OPENAI_TEXT_MODEL)
+OPENAI_TEXT_MODEL_WRITE = os.environ.get("OPENAI_TEXT_MODEL_WRITE", "gpt-5.5-pro")
 
 # Configuração Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -40,6 +43,44 @@ mc.set_config({
 MC_LIST_ID = os.environ.get("MC_LIST_ID_REVAMAIS", "510b954f9a") 
 MC_FROM_NAME = os.environ.get("MC_FROM_NAME", "Revalidatie")
 MC_REPLY_TO = os.environ.get("MC_REPLY_TO", "contato@revalidatie.com.br")
+
+
+def gerar_texto_openai(prompt, system_prompt=None, model_name=None):
+    """
+    Gera texto com o modelo principal da OpenAI configurado para o projeto.
+    """
+    model_name = model_name or OPENAI_TEXT_MODEL_SEARCH
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    response = client.chat.completions.create(
+        model=model_name,
+        messages=messages,
+    )
+    content = response.choices[0].message.content or ""
+    return content.strip()
+
+
+def gerar_texto_preferencial(prompt, system_prompt=None, model_name=None):
+    """
+    Usa OpenAI como primeira opção e Gemini como fallback para tarefas textuais.
+    """
+    model_name = model_name or OPENAI_TEXT_MODEL_SEARCH
+    try:
+        return gerar_texto_openai(prompt, system_prompt=system_prompt, model_name=model_name)
+    except Exception as e_openai:
+        print(f"⚠️ Falha OpenAI ({model_name}): {e_openai}")
+
+    try:
+        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
+        full_prompt = prompt if not system_prompt else f"{system_prompt}\n\n{prompt}"
+        response = model.generate_content(full_prompt)
+        return (response.text or "").strip()
+    except Exception as e_gemini:
+        print(f"⚠️ Falha Gemini ({GEMINI_TEXT_MODEL}): {e_gemini}")
+        raise
 
 
 # -------------------------------------------------------------------------
@@ -103,7 +144,6 @@ def generate_search_keywords(tema):
     Essas keywords serão usadas para filtrar resultados irrelevantes.
     """
     try:
-        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
         prompt = (
             f"Analyze the medical topic: '{tema}'. "
             "Return a Python list of strings with 3 to 5 ESSENTIAL English keywords (single words or short bi-grams) "
@@ -111,7 +151,11 @@ def generate_search_keywords(tema):
             "Focus on the pathology, anatomy, or intervention. "
             "Example output format: ['Hypertension', 'Blood Pressure', 'Cardiovascular']"
         )
-        response = model.generate_content(prompt).text
+        response = gerar_texto_preferencial(
+            prompt,
+            system_prompt="You extract precise biomedical keywords for PubMed filtering.",
+            model_name=OPENAI_TEXT_MODEL_SEARCH,
+        )
         # Limpeza básica para extrair a lista
         import ast
         start = response.find('[')
@@ -124,13 +168,35 @@ def generate_search_keywords(tema):
         print(f"⚠️ Falha ao gerar keywords: {e}")
         return []
 
-def buscar_referencias_pubmed(tema_ingles):
+def gerar_query_pubmed_tema(tema):
+    """
+    Gera uma query booleana para PubMed usando OpenAI como motor principal.
+    """
+    prompt_query = (
+        f"Create a specific PubMed Search Query for the topic: '{tema}'. "
+        "Use boolean operators (AND, OR) to combine MeSH terms or keywords. "
+        "IMPORTANT: Use 'AND' to intersect distinct concepts (e.g. 'Diabetes AND Exercise'). "
+        "Use 'OR' only for synonyms. "
+        "Return ONLY the query string, nothing else. No explanation."
+    )
+    try:
+        return gerar_texto_preferencial(
+            prompt_query,
+            system_prompt="You write compact, high-precision PubMed boolean search queries.",
+            model_name=OPENAI_TEXT_MODEL_SEARCH,
+        ).replace('"', '').strip()
+    except Exception as e:
+        print(f"⚠️ Falha ao gerar query PubMed: {e}")
+        return tema
+
+
+def buscar_referencias_pubmed(tema_ingles, limite_retorno=5):
     """
     Busca artigos no PubMed com filtro rigoroso de qualidade e relevância.
     1. Busca 30 candidatos (SR/RCT/Review).
     2. Filtra: Título/Abstract TEM que ter keywords do tema (Relevância).
     3. Rankeia: Prioriza JCR Impact Factor alto.
-    4. Retorna Top 5.
+    4. Retorna os melhores artigos ranqueados.
     """
     print(f"🔎 Buscando referências para: {tema_ingles}...")
     
@@ -218,6 +284,7 @@ def buscar_referencias_pubmed(tema_ingles):
                 link = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
 
                 candidates.append({
+                    "pmid": str(pmid),
                     "texto": f"{primeiro_autor}. {title}. {journal.title()}, {ano}.",
                     "link": link,
                     "resumo": abstract,
@@ -236,10 +303,10 @@ def buscar_referencias_pubmed(tema_ingles):
     candidates.sort(key=lambda x: x['jif'], reverse=True)
     
     print(f"📊 {len(candidates)} artigos relevantes pós-filtro.")
-    for c in candidates[:5]:
+    for c in candidates[:limite_retorno]:
         print(f"   ⭐ [{c['jif']:.1f}] {c['journal']} - {c['texto'][:50]}...")
         
-    return candidates[:5]
+    return candidates[:limite_retorno]
 
 def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename=None):
     """
@@ -408,13 +475,6 @@ def gerar_conteudo_revamais(tema, referencias):
     Gera o conteúdo HTML do boletim.
     """
     print("✍️ Escrevendo conteúdo Reva +...")
-    
-    refs_html = ""
-    if referencias:
-        refs_html = "<h3>📚 Referências Científicas (Nível de Evidência Elevado):</h3><ul>"
-        for ref in referencias:
-            refs_html += f"<li>{ref['texto']} <a href='{ref['link']}' target='_blank'>[PubMed]</a></li>"
-        refs_html += "</ul>"
 
     prompt = f"""
     Você é o editor do "Reva +", um boletim de saúde da clínica Revalidatie.
@@ -429,10 +489,18 @@ def gerar_conteudo_revamais(tema, referencias):
        - Explique O PORQUÊ (Fisiologia/Mecanismo): Por que isso acontece? O que muda no corpo com o tratamento? (Ex: fale sobre circulação colateral, eficiência muscular, neuroplasticidade).
        - O usuário GOSTA dessa explicação educativa do "como funciona".
     
-    2. **O Que a Ciência Diz (Baseado nos Abstracts abaixo)**:
+    2. **O Que a Ciência Diz (Baseado SOMENTE nos artigos selecionados abaixo)**:
        - Agora, cite as evidências fornecidas.
        - Use os abstracts para validar a explicação anterior.
        - Diga "Estudos recentes mostram que..." e use os dados dos resumos.
+
+    REGRAS DE SEGURANÇA E FIDELIDADE:
+    - Não invente números, magnitude de efeito, tempo de intervenção, perfil de pacientes ou conclusões.
+    - Não cite estudos que não estejam na lista abaixo.
+    - Se um detalhe não estiver explícito nos resumos, não mencione esse detalhe.
+    - Se a evidência parecer preliminar, heterogênea ou limitada, diga isso com cautela.
+    - Use linguagem prudente: "sugere", "indica", "aponta", "pode ajudar", quando apropriado.
+    - Na seção de ciência, organize os achados em uma lista HTML (<ul><li>) com 1 item por artigo ou achado principal.
     
     --- EVIDÊNCIA CIENTÍFICA (Para a seção 'O Que a Ciência Diz') ---
     {chr(10).join([ f'Artigo {i+1}: {r["texto"]}{chr(10)}Resumo: {r["resumo"]}{chr(10)}' for i, r in enumerate(referencias) ])}
@@ -451,16 +519,15 @@ def gerar_conteudo_revamais(tema, referencias):
     IMPORTANTE: Sempre direcione para "Consulte seu Fisioterapeuta" e NUNCA "Consulte seu Médico". O contexto é reabilitação física.
     """
     
-    try:
-        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
-        response = model.generate_content(prompt)
-        html_content = response.text
-    except:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[{"role": "user", "content": prompt}]
-        )
-        html_content = response.choices[0].message.content
+    html_content = gerar_texto_preferencial(
+        prompt,
+        system_prompt=(
+            "You are a careful medical editor. "
+            "Stay faithful to the supplied evidence, avoid unsupported claims, "
+            "and return only raw HTML."
+        ),
+        model_name=OPENAI_TEXT_MODEL_WRITE,
+    )
 
     # Limpeza de Markdown
     html_content = html_content.replace("```html", "").replace("```", "")
@@ -476,9 +543,132 @@ def gerar_conteudo_revamais(tema, referencias):
     
     return html_content
 
+
+def limpar_texto_html(html):
+    """
+    Remove tags HTML de forma simples para reaproveitar o conteúdo em prompts.
+    """
+    import re
+
+    text = re.sub(r'<br\s*/?>', '\n', html, flags=re.IGNORECASE)
+    text = re.sub(r'</(p|li|h1|h2|h3|h4|h5|h6|div)>', '\n', text, flags=re.IGNORECASE)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r'\n\s*\n+', '\n', text)
+    return text.strip()
+
+
+def extrair_secao_html(html, h2_regex):
+    """
+    Extrai o conteúdo entre um H2 alvo e o próximo H2.
+    """
+    import re
+
+    pattern = re.compile(
+        rf'<h2[^>]*>\s*{h2_regex}\s*</h2>(.*?)(?=<h2[^>]*>|$)',
+        re.IGNORECASE | re.DOTALL,
+    )
+    match = pattern.search(html)
+    if not match:
+        return ""
+    return limpar_texto_html(match.group(1))
+
+
+def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
+    """
+    Gera prompts visuais mais ancorados no conteúdo final do boletim.
+    """
+    secao_ciencia = extrair_secao_html(html_texto, r"O\s+que\s+a\s+Ci[eê]ncia\s+Comprova\??")
+    secao_dicas = extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas")
+    texto_limpo = limpar_texto_html(html_texto)
+
+    if not secao_ciencia:
+        secao_ciencia = texto_limpo[:1200]
+    if not secao_dicas:
+        secao_dicas = texto_limpo[:1200]
+
+    referencias_contexto = "\n".join(
+        [f"- {r['texto']}" for r in referencias[:3]]
+    ) or "- Sem referências resumidas."
+
+    prompt_briefs = f"""
+    You are creating two grounded image prompts for a patient-facing medical newsletter.
+    Return ONLY valid JSON with this exact shape:
+    {{
+      "ciencia": {{"prompt_english": "..."}},
+      "dicas": {{"prompt_english": "..."}}
+    }}
+
+    RULES:
+    - Base the prompts strictly on the supplied theme, selected studies, and final newsletter text.
+    - Avoid generic wellness visuals, random symbols, and concepts not present in the content.
+    - Prefer concrete anatomy, physiology, movement, rehabilitation actions, daily habits, or evidence concepts explicitly present in the text.
+    - Visual style: premium editorial medical infographic, clean, minimal, white background, high contrast, lots of whitespace.
+    - The "ciencia" image must explain the actual mechanism or evidence narrative from the science section.
+    - The "dicas" image must show only the practical actions or habits explicitly recommended in the tips section.
+    - No logos, no brand marks, no clutter, no unrelated charts.
+    - If short labels are useful, include at most 2 or 3 labels in Portuguese. If unsure, request no text.
+
+    THEME:
+    {tema}
+
+    SELECTED STUDIES:
+    {referencias_contexto}
+
+    SCIENCE SECTION:
+    {secao_ciencia}
+
+    PRACTICAL TIPS SECTION:
+    {secao_dicas}
+    """
+
+    try:
+        response = gerar_texto_preferencial(
+            prompt_briefs,
+            system_prompt=(
+                "You are a precise medical visual editor. "
+                "Produce image prompts tightly grounded in the provided newsletter content."
+            ),
+            model_name=OPENAI_TEXT_MODEL_WRITE,
+        )
+        response = response.replace("```json", "").replace("```", "").strip()
+        briefs = json.loads(response)
+
+        if (
+            isinstance(briefs, dict)
+            and isinstance(briefs.get("ciencia"), dict)
+            and isinstance(briefs.get("dicas"), dict)
+            and briefs["ciencia"].get("prompt_english")
+            and briefs["dicas"].get("prompt_english")
+        ):
+            return briefs
+    except Exception as e:
+        print(f"⚠️ Falha ao gerar briefs visuais do Reva+: {e}")
+
+    return {
+        "ciencia": {
+            "prompt_english": (
+                f"Create a premium editorial medical infographic based strictly on this newsletter science section about '{tema}': "
+                f"{secao_ciencia[:900]} "
+                "Show the specific anatomy, physiology, rehabilitation mechanism, or evidence concept described in the text. "
+                "White background, minimal composition, high contrast, no clutter. "
+                "Include at most 2 or 3 short Portuguese labels only if clearly supported by the section; otherwise no text."
+            )
+        },
+        "dicas": {
+            "prompt_english": (
+                f"Create a premium editorial medical infographic based strictly on this practical tips section about '{tema}': "
+                f"{secao_dicas[:900]} "
+                "Show only the concrete actions, habits, or rehabilitation steps described in the text. "
+                "White background, checklist or step-by-step layout, minimal composition, high contrast, no clutter. "
+                "Include at most 2 or 3 short Portuguese labels only if clearly supported by the section; otherwise no text."
+            )
+        },
+    }
+
 from firebase_service import read_json_from_storage
 
-def obter_proximo_tema_csv():
+def obter_proximo_tema_csv(consumir=True):
     """
     Lê o calendário e usa o Firebase para persistir quais TEMAS já foram usados (Estado Global).
     """
@@ -530,31 +720,34 @@ def obter_proximo_tema_csv():
             
     if tema_escolhido:
         print(f"📅 Tema do Calendário Selecionado: {tema_escolhido} (Item {idx_atual}/{total_linhas})")
-        
-        # 4. Atualiza estado e salva no Firebase
-        used_titles.add(tema_escolhido)
-        state_data["used_titles"] = list(used_titles)
-        state_data["last_updated"] = datetime.now().isoformat()
-        
-        # Cria arquivo local temporário para upload
-        try:
-            # Usa prefixo para facilitar debug
-            with NamedTemporaryFile(mode='w', delete=False, suffix='.json', prefix='state_update_') as tmp:
-                json.dump(state_data, tmp)
-                tmp_path = tmp.name
-                
-            print(f"💾 Tentando salvar estado atualizado ({len(used_titles)} itens) no Firebase...")
-            url_state = upload_file(tmp_path, state_file)
-            
-            if url_state:
-                print("✅ Estado atualizado com sucesso no Firebase.")
-            else:
-                print("⚠️ FALHA SILENCIOSA ao salvar estado (upload_file retornou None). O tema vai repetir!")
-                
-        except Exception as e_save:
-            print(f"❌ ERRO EXCEÇÃO ao salvar estado: {e_save}")
-        finally:
-             if os.path.exists(tmp_path): os.remove(tmp_path)
+
+        if consumir:
+            # 4. Atualiza estado e salva no Firebase
+            used_titles.add(tema_escolhido)
+            state_data["used_titles"] = list(used_titles)
+            state_data["last_updated"] = datetime.now().isoformat()
+
+            # Cria arquivo local temporário para upload
+            tmp_path = None
+            try:
+                # Usa prefixo para facilitar debug
+                with NamedTemporaryFile(mode='w', delete=False, suffix='.json', prefix='state_update_') as tmp:
+                    json.dump(state_data, tmp)
+                    tmp_path = tmp.name
+
+                print(f"💾 Tentando salvar estado atualizado ({len(used_titles)} itens) no Firebase...")
+                url_state = upload_file(tmp_path, state_file)
+
+                if url_state:
+                    print("✅ Estado atualizado com sucesso no Firebase.")
+                else:
+                    print("⚠️ FALHA SILENCIOSA ao salvar estado (upload_file retornou None). O tema vai repetir!")
+
+            except Exception as e_save:
+                print(f"❌ ERRO EXCEÇÃO ao salvar estado: {e_save}")
+            finally:
+                if tmp_path and os.path.exists(tmp_path):
+                    os.remove(tmp_path)
              
         return {
             "tema": tema_escolhido,
@@ -563,6 +756,55 @@ def obter_proximo_tema_csv():
     else:
         print("⚠️ Todos os temas do calendário já foram usados!")
         return None
+
+
+def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True):
+    """
+    Resolve o tema efetivo do Reva+ e o formato padrão do Instagram.
+    """
+    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
+    formato_instagram = "Carrossel"
+    tema = tema_usuario
+
+    if not tema or tema == "auto":
+        dados_csv = obter_proximo_tema_csv(consumir=consumir_tema_auto)
+        if not dados_csv:
+            return None
+        tema = dados_csv["tema"]
+        formato_instagram = dados_csv.get("formato", "Carrossel")
+
+    return {
+        "tema": tema,
+        "formato_instagram": formato_instagram,
+        "is_calendar_source": is_calendar_source,
+    }
+
+
+def preparar_referencias_revamais(tema_usuario=None, quantidade_referencias=8):
+    """
+    Etapa intermediária do pipeline: resolve o tema e retorna artigos candidatos
+    para seleção manual antes da geração do boletim.
+    """
+    dados_tema = resolver_tema_revamais(
+        tema_usuario=tema_usuario,
+        consumir_tema_auto=False,
+    )
+    if not dados_tema:
+        return {"status": "error", "message": "Nenhum tema disponível para preparar referências."}
+
+    tema = dados_tema["tema"]
+    tema_ingles = gerar_query_pubmed_tema(tema)
+    referencias = buscar_referencias_pubmed(tema_ingles, limite_retorno=quantidade_referencias)
+
+    return {
+        "status": "success",
+        "tema": tema,
+        "tema_ingles": tema_ingles,
+        "instagram_format": dados_tema["formato_instagram"],
+        "referencias_sugeridas": referencias,
+        "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
+        "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+    }
 
 import textwrap
 
@@ -762,7 +1004,15 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
         
     return assets
 
-def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram=True, enviar_email=True, log_callback=None, check_cancel=None):
+def criar_campanha_revamais(
+    tema_usuario=None,
+    gerar_midia=True,
+    gerar_instagram=True,
+    enviar_email=True,
+    referencias_selecionadas=None,
+    log_callback=None,
+    check_cancel=None,
+):
     """
     Cria campanha Reva+ com suporte a logs e cancelamento.
     Orquestra o processo completo do Reva +.
@@ -777,58 +1027,61 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
             raise Exception("CANCELADO_PELO_USUARIO")
 
     log("🚀 Iniciando pipeline do Reva +...")
-    
-    # Identifica fonte do tema para agendamento
-    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
-
-    formato_instagram = "Carrossel" # Default
-    tema = tema_usuario # Inicializa tema com o valor do usuário
 
     check()
-    # Se não veio tema, tenta pegar do CSV
-    if not tema or tema == "auto":
-        log("🤖 Modo Automático: Buscando tema no calendário editorial...")
-        dados_csv = obter_proximo_tema_csv()
-        if not dados_csv:
-            return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
-        tema = dados_csv['tema']
-        formato_instagram = dados_csv.get('formato', 'Carrossel')
+    dados_tema = resolver_tema_revamais(tema_usuario=tema_usuario, consumir_tema_auto=True)
+    if not dados_tema:
+        return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
+
+    tema = dados_tema["tema"]
+    formato_instagram = dados_tema["formato_instagram"]
+    is_calendar_source = dados_tema["is_calendar_source"]
             
     # Remove duplicidade de log se já foi logado pelo wrapper, mas mal não faz
     log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
-            
-    log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
-    check()
-    # 1. Traduzir tema para keywords científicas
-    try:
-        log("🌍 Traduzindo tema para keywords científicas...")
-        model = genai.GenerativeModel(GEMINI_TEXT_MODEL)
-        # Prompt otimizado para gerar query booleana específica
-        prompt_query = (
-            f"Create a specific PubMed Search Query for the topic: '{tema}'. "
-            "Use boolean operators (AND, OR) to combine MeSH terms or keywords. "
-            "IMPORTANT: Use 'AND' to intersect distinct concepts (e.g. 'Diabetes AND Exercise'). "
-            "Use 'OR' only for synonyms. "
-            "Return ONLY the query string, nothing else. No explanation."
-        )
-        tema_ingles = model.generate_content(prompt_query).text.strip().replace('"', '') # Remove aspas extras se houver
-    except:
-        tema_ingles = tema
+    referencias_selecionadas = referencias_selecionadas or []
+    tema_ingles = tema
+    referencias = []
 
-    check()
-    # 2. Buscar Referências
-    log(f"🔎 Buscando referências para: {tema_ingles}...")
-    referencias = buscar_referencias_pubmed(tema_ingles)
+    if referencias_selecionadas:
+        log(f"🧠 Usando {len(referencias_selecionadas)} artigos selecionados manualmente.")
+        referencias = referencias_selecionadas
+    else:
+        check()
+        # 1. Traduzir tema para keywords científicas
+        log("🌍 Traduzindo tema para keywords científicas...")
+        tema_ingles = gerar_query_pubmed_tema(tema)
+
+        check()
+        # 2. Buscar Referências
+        log(f"🔎 Buscando referências para: {tema_ingles}...")
+        referencias = buscar_referencias_pubmed(tema_ingles)
+
+    if not referencias:
+        return {
+            "status": "error",
+            "message": "Nenhuma referência válida foi encontrada ou selecionada para gerar o Reva+."
+        }
     
     check()
-    # 3. Gerar Imagens
+    # 3. Preparar placeholders de imagem
     url_capa_estatica = "https://i.imgur.com/oGzxgtK.jpeg"
     url_ilustrativa = "https://placehold.co/600x400?text=Imagem+Ilustrativa" # Placeholder default
     url_corpo_ciencia = "https://placehold.co/600x400?text=Infografico+Ciencia" # Placeholder default
     url_corpo_dicas = "https://placehold.co/600x400?text=Infografico+Dicas" # Placeholder default
 
+    check()
+    # 4. Gerar Texto
+    log("✍️ Escrevendo boletim e formatando HTML...")
+    html_texto = gerar_conteudo_revamais(tema, referencias)
+
+    check()
+    # 5. Gerar Imagens a partir do conteúdo final
     if gerar_midia:
+        log("🧭 Derivando prompts visuais do conteúdo final...")
+        briefs_visuais = gerar_briefs_visuais_revamais(tema, html_texto, referencias)
+
         log("🎨 Gerando assets visuais (isso pode demorar)...")
         try:
              # 1. Imagem Ilustrativa (Lifestyle/Visual)
@@ -836,31 +1089,16 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
             url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
 
             # 2. Imagem Corpo (Infográfico/Educativo) - Ciência/Mecanismo
-            prompt_corpo_ciencia = (
-                f"An educational infographic or diagram focused ONLY on the scientific mechanism or evidence about '{tema_ingles}'. "
-                "Keep it simple, minimal elements, high contrast, white background. "
-                "At most 2-3 short labels. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). "
-                "If you cannot generate correct Portuguese text, do not include any text."
-            )
+            prompt_corpo_ciencia = briefs_visuais["ciencia"]["prompt_english"]
             url_corpo_ciencia = gerar_imagem(prompt_corpo_ciencia, "corpo_ciencia")
 
             # 3. Imagem Corpo (Infográfico/Educativo) - Dicas Práticas
-            prompt_corpo_dicas = (
-                f"A clean educational infographic focused ONLY on practical tips for '{tema_ingles}'. "
-                "Use a simple checklist/steps style, minimal elements, white background. "
-                "At most 3 short tips. IMPORTANT: Any text or labels MUST BE IN PORTUGUESE (PT-BR). "
-                "If you cannot generate correct Portuguese text, do not include any text."
-            )
+            prompt_corpo_dicas = briefs_visuais["dicas"]["prompt_english"]
             url_corpo_dicas = gerar_imagem(prompt_corpo_dicas, "corpo_dicas")
         except Exception as e:
             log(f"⚠️ Erro ao gerar imagens: {e}")
     else:
         log("⏩ Pulando geração de imagens (opção desmarcada).")
-    
-    check()
-    # 4. Gerar Texto
-    log("✍️ Escrevendo boletim e formatando HTML...")
-    html_texto = gerar_conteudo_revamais(tema, referencias)
 
     def inserir_imagem_educativa(html, img_url, h2_regex, fallback="first_h2"):
         """Insere a imagem educativa após um H2 alvo, com fallback controlado."""
@@ -900,7 +1138,7 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     )
 
     check()
-    # 4.5 Gerar Conteúdo Instagram (Extra)
+    # 5.5 Gerar Conteúdo Instagram (Extra)
     instagram_assets = []
     if gerar_instagram:
         log("📸 Criando conteúdo para Instagram...")
@@ -1111,6 +1349,11 @@ def criar_campanha_revamais(tema_usuario=None, gerar_midia=True, gerar_instagram
     return {
         "status": "success", 
         "campaign_id": campaign['id'], 
+        "tema": tema,
+        "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
+        "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+        "tema_query_pubmed": tema_ingles,
+        "referencias_utilizadas": referencias,
         "url_capa": url_capa_estatica,
         "url_ilustrativa": url_ilustrativa,
         "url_corpo": url_corpo,
