@@ -32,6 +32,7 @@ import re
 from datetime import datetime, timedelta
 
 import pytz
+import requests
 from Bio import Entrez
 from openai import OpenAI
 from pydub import AudioSegment
@@ -93,9 +94,32 @@ from elevenlabs import VoiceSettings
 # ... (imports)
 
 # --- ElevenLabs ---
+def _bool_env(name, default=False):
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _int_env(name, default=None):
+    raw = os.environ.get(name)
+    if raw in (None, ""):
+        return default
+    try:
+        return int(raw)
+    except Exception:
+        return default
+
+
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
 ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "tnSpp4vdxKPjI9w0GnoV")
+ELEVEN_AUDIO_DIALOGUE_ENABLED = _bool_env("ELEVEN_AUDIO_DIALOGUE_ENABLED", True)
+ELEVEN_AUDIO_DIALOGUE_MODEL = os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v3")
+ELEVEN_AUDIO_FALLBACK_MODEL = os.environ.get("ELEVEN_AUDIO_FALLBACK_MODEL", "eleven_multilingual_v2")
+ELEVEN_AUDIO_LANGUAGE_CODE = os.environ.get("ELEVEN_AUDIO_LANGUAGE_CODE", "pt")
+ELEVEN_AUDIO_DIALOGUE_MAX_CHARS = _int_env("ELEVEN_AUDIO_DIALOGUE_MAX_CHARS", 1800)
+ELEVEN_AUDIO_DIALOGUE_SEED = _int_env("ELEVEN_AUDIO_DIALOGUE_SEED")
 elevenlabs_client = None
 if ELEVENLABS_API_KEY:
     elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
@@ -894,6 +918,159 @@ def formatar_abreviacoes(texto):
     return texto
 
 
+TTS_TRANSICOES_CURTAS = [
+    "Isso abre caminho para o proximo estudo da pauta.",
+    "Com esse gancho, a gente vai para o proximo estudo.",
+    "Na sequencia, a gente passa para o proximo estudo.",
+]
+
+
+def _encurtar_transicao_para_audio(texto):
+    base = (texto or "").strip()
+    if not base:
+        return ""
+    idx = sum(ord(c) for c in base) % len(TTS_TRANSICOES_CURTAS)
+    return TTS_TRANSICOES_CURTAS[idx]
+
+
+def preparar_texto_para_audio(texto, speaker="HOST"):
+    """
+    Prepara o texto somente para TTS.
+    Nao altera email, HTML nem o roteiro salvo.
+    """
+    txt = " ".join(str(texto or "").split()).strip()
+    if not txt:
+        return ""
+
+    # Transicoes longas, especialmente quando carregam titulo em ingles,
+    # soam artificiais e quebram o fluxo no TTS.
+    if (_eh_fala_transicao(txt) or _eh_transicao_mecanica(txt)) and (":" in txt or len(txt) > 90):
+        return _encurtar_transicao_para_audio(txt)
+
+    substituicoes = [
+        (r"\b6MWD\b", "teste de caminhada de seis minutos"),
+        (r"\b6MWT\b", "teste de caminhada de seis minutos"),
+        (r"\bRCT\b", "ensaio clinico randomizado"),
+        (r"\brandomised controlled trial\b", "ensaio clinico randomizado"),
+        (r"\brandomized controlled trial\b", "ensaio clinico randomizado"),
+        (r"\bUPR\b", "U.P.R."),
+        (r"\bIRE1\b", "I.R.E.1"),
+        (r"\bPERK\b", "P.E.R.K."),
+        (r"\bATF6\b", "A.T.F.6"),
+        (r"\bDPOC\b", "D.P.O.C."),
+        (r"\bCIPN\b", "C.I.P.N."),
+        (r"\bVO2peak\b", "V.O.2 peak"),
+        (r"\(neo-\)adjuvant\b", "neo ou adjuvante"),
+        (r"\(neo-\)adjuvante\b", "neo ou adjuvante"),
+        (r"\(Review\)", "(revisao)"),
+    ]
+    for padrao, repl in substituicoes:
+        txt = re.sub(padrao, repl, txt, flags=re.IGNORECASE)
+
+    if speaker == "COHOST":
+        txt = re.sub(r"^Com certeza,\s*Ivo!\s*", "Com certeza, Ivo. ", txt)
+
+    return txt.strip()
+
+
+def normalizar_dialogo_para_audio(dialogo):
+    dialogo_norm = []
+    for fala in normalizar_dialogo(dialogo):
+        speaker = fala.get("speaker", "HOST")
+        text = preparar_texto_para_audio(fala.get("text", ""), speaker=speaker)
+        if text:
+            dialogo_norm.append({"speaker": speaker, "text": text})
+    return dialogo_norm
+
+
+def _agrupar_dialogo_para_v3(dialogo, limite_chars=1800):
+    grupos = []
+    atual = []
+    chars_atuais = 0
+
+    for fala in dialogo:
+        texto = fala.get("text", "")
+        tamanho = len(texto)
+        if atual and chars_atuais + tamanho > limite_chars:
+            grupos.append(atual)
+            atual = []
+            chars_atuais = 0
+        atual.append(fala)
+        chars_atuais += tamanho
+
+    if atual:
+        grupos.append(atual)
+
+    return grupos
+
+
+def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None):
+    """
+    Usa o endpoint Text to Dialogue do Eleven v3.
+    """
+    if not ELEVENLABS_API_KEY:
+        raise ValueError("Sem chave ElevenLabs configurada.")
+
+    dialogo_audio = normalizar_dialogo_para_audio(dialogo)
+    if not dialogo_audio:
+        raise ValueError("Dialogo vazio para audio.")
+
+    grupos = _agrupar_dialogo_para_v3(
+        dialogo_audio,
+        limite_chars=max(500, ELEVEN_AUDIO_DIALOGUE_MAX_CHARS),
+    )
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+        "Accept": "audio/mpeg",
+    }
+    endpoint = "https://api.elevenlabs.io/v1/text-to-dialogue?output_format=mp3_44100_128"
+    caminhos_partes = []
+
+    for idx, grupo in enumerate(grupos):
+        payload = {
+            "model_id": ELEVEN_AUDIO_DIALOGUE_MODEL,
+            "language_code": ELEVEN_AUDIO_LANGUAGE_CODE,
+            "apply_text_normalization": "auto",
+            "inputs": [
+                {
+                    "text": fala["text"],
+                    "voice_id": ELEVEN_VOICE_ID_HOST if fala["speaker"] == "HOST" else ELEVEN_VOICE_ID_COHOST,
+                }
+                for fala in grupo
+            ],
+        }
+        if seed is not None:
+            payload["seed"] = (seed + idx) % 4294967295
+
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=180)
+        if response.status_code >= 400:
+            detalhe = response.text[:500] if response.text else "sem detalhe"
+            raise RuntimeError(f"Eleven v3 dialogue falhou ({response.status_code}): {detalhe}")
+
+        if len(grupos) == 1:
+            caminho_parte = caminho_saida
+        else:
+            raiz, ext = os.path.splitext(caminho_saida)
+            caminho_parte = f"{raiz}_parte{idx+1}{ext}"
+
+        with open(caminho_parte, "wb") as f:
+            f.write(response.content)
+        caminhos_partes.append(caminho_parte)
+
+    if len(caminhos_partes) == 1:
+        return caminho_saida, dialogo_audio
+
+    combinado = AudioSegment.empty()
+    for idx, caminho in enumerate(caminhos_partes):
+        combinado += AudioSegment.from_file(caminho, format="mp3")
+        if idx < len(caminhos_partes) - 1:
+            combinado += AudioSegment.silent(duration=350)
+
+    combinado.export(caminho_saida, format="mp3")
+    return caminho_saida, dialogo_audio
+
+
 def dividir_texto(texto, limite=4096):
     # simples quebra por tamanho aproximado de caracteres
     return textwrap.wrap(texto, width=limite, break_long_words=False, break_on_hyphens=False)
@@ -1635,32 +1812,47 @@ def rodar_boletim(opcoes=None):
             
             abertura_escolhida = random.choice(POOL_ABERTURAS)
             audios_abertura_temp = []
+            path_abertura_final = os.path.join(AUDIO_DIR, f"intro_falada_{hoje}.mp3")
             
             try:
-                for idx_intro, fala in enumerate(abertura_escolhida):
-                    voice_id = ELEVEN_VOICE_ID_HOST if fala['speaker'] == 'HOST' else ELEVEN_VOICE_ID_COHOST
-                    audio_gen = elevenlabs_client.text_to_speech.convert(
-                        voice_id=voice_id,
-                        text=fala['text'],
-                        model_id="eleven_multilingual_v2", # Usar v2 para intro (geralmente mais estável curto) ou v2.5
-                        voice_settings=VoiceSettings(stability=0.75, similarity_boost=0.75, style=0.0, use_speaker_boost=True)
-                    )
-                    path_intro = os.path.join(AUDIO_DIR, f"temp_intro_{idx_intro}.mp3")
-                    with open(path_intro, "wb") as f:
-                        for chunk in audio_gen: f.write(chunk)
-                    audios_abertura_temp.append(path_intro)
-                
-                # Combina a abertura
-                abertura_combinada = AudioSegment.empty()
-                for p in audios_abertura_temp:
-                    abertura_combinada += AudioSegment.from_file(p) + AudioSegment.silent(duration=300)
-                
-                path_abertura_final = os.path.join(AUDIO_DIR, f"intro_falada_{hoje}.mp3")
-                abertura_combinada.export(path_abertura_final, format="mp3")
-                
-                # Cleanup temp intro files
-                # for p in audios_abertura_temp: os.remove(p)
-                
+                usou_dialogue_v3 = False
+
+                if ELEVEN_AUDIO_DIALOGUE_ENABLED:
+                    try:
+                        gerar_dialogo_com_eleven_v3(
+                            abertura_escolhida,
+                            path_abertura_final,
+                            seed=ELEVEN_AUDIO_DIALOGUE_SEED,
+                        )
+                        usou_dialogue_v3 = True
+                    except Exception as e_v3_intro:
+                        print(f"⚠️ Eleven v3 na abertura falhou, usando fallback: {e_v3_intro}")
+
+                if not usou_dialogue_v3:
+                    for idx_intro, fala in enumerate(normalizar_dialogo_para_audio(abertura_escolhida)):
+                        voice_id = ELEVEN_VOICE_ID_HOST if fala['speaker'] == 'HOST' else ELEVEN_VOICE_ID_COHOST
+                        audio_gen = elevenlabs_client.text_to_speech.convert(
+                            voice_id=voice_id,
+                            text=fala['text'],
+                            model_id=ELEVEN_AUDIO_FALLBACK_MODEL,
+                            voice_settings=VoiceSettings(
+                                stability=0.75,
+                                similarity_boost=0.75,
+                                style=0.0,
+                                use_speaker_boost=True,
+                            )
+                        )
+                        path_intro = os.path.join(AUDIO_DIR, f"temp_intro_{idx_intro}.mp3")
+                        with open(path_intro, "wb") as f:
+                            for chunk in audio_gen:
+                                f.write(chunk)
+                        audios_abertura_temp.append(path_intro)
+
+                    abertura_combinada = AudioSegment.empty()
+                    for p in audios_abertura_temp:
+                        abertura_combinada += AudioSegment.from_file(p) + AudioSegment.silent(duration=300)
+                    abertura_combinada.export(path_abertura_final, format="mp3")
+
             except Exception as e:
                 print(f"Erro ao gerar abertura: {e}")
 
@@ -1692,9 +1884,40 @@ def rodar_boletim(opcoes=None):
                 
                 try:
                     if not elevenlabs_client: raise ValueError("Sem chave ElevenLabs")
-                    
+
+                    dialogo_audio = normalizar_dialogo_para_audio(dialogo)
+                    total_chars_elevenlabs += sum(len(fala.get("text", "")) for fala in dialogo_audio)
+
+                    usou_dialogue_v3 = False
+                    if ELEVEN_AUDIO_DIALOGUE_ENABLED:
+                        try:
+                            caminho_gerado, _ = gerar_dialogo_com_eleven_v3(
+                                dialogo_audio,
+                                caminho_estudo,
+                                seed=(
+                                    ELEVEN_AUDIO_DIALOGUE_SEED + estudo_idx
+                                    if ELEVEN_AUDIO_DIALOGUE_SEED is not None
+                                    else None
+                                ),
+                            )
+                            audio_paths.append(caminho_gerado)
+                            usou_dialogue_v3 = True
+
+                            if opcoes.get('firebase'):
+                                try:
+                                    from firebase_service import upload_file
+                                    dest_blob = f"audios_raw/{hoje}/estudo{estudo_idx+1}_dialogue_v3.mp3"
+                                    upload_file(caminho_gerado, dest_blob)
+                                except Exception as e_upload:
+                                    print(f"⚠️ Erro upload audio v3: {e_upload}")
+                        except Exception as e_v3:
+                            print(f"⚠️ Eleven v3 falhou no estudo {estudo_idx+1}, usando fallback: {e_v3}")
+
+                    if usou_dialogue_v3:
+                        continue
+
                     estudo_audios = []
-                    for fala_idx, fala in enumerate(dialogo):
+                    for fala_idx, fala in enumerate(dialogo_audio):
                         # Normaliza formato do JSON (pode vir {"HOST": "texto"} ou {"speaker": "HOST", "text": "texto"})
                         speaker_clean = "HOST"
                         text = ""
@@ -1715,8 +1938,6 @@ def rodar_boletim(opcoes=None):
                         if not text: 
                             print(f"⚠️ Fala vazia ou formato desconhecido no índice {fala_idx}: {fala}")
                             continue
-                            
-                        total_chars_elevenlabs += len(text)
                         
                         # DEBUG: Ver quem está falando
                         # print(f"   [FALA {fala_idx+1}] Speaker: '{speaker_clean}'")
@@ -1730,7 +1951,7 @@ def rodar_boletim(opcoes=None):
                         audio_generator = elevenlabs_client.text_to_speech.convert(
                             voice_id=voice_id,
                             text=text,
-                            model_id="eleven_multilingual_v2", # REVERTED: v2.5 falhou no teste de clonagem
+                            model_id=ELEVEN_AUDIO_FALLBACK_MODEL,
                             output_format="mp3_44100_128",
                             voice_settings=VoiceSettings(
                                 stability=0.50,       # "More Emotion" setting
