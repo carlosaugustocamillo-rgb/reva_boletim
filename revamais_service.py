@@ -30,8 +30,26 @@ OPENAI_TEXT_MODEL_WRITE = os.environ.get("OPENAI_TEXT_MODEL_WRITE", "gpt-5.5-pro
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-GEMINI_TEXT_MODEL = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3-pro-preview")
-GEMINI_IMAGE_MODEL = os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3-pro-image-preview")
+DEFAULT_GEMINI_TEXT_MODEL = "gemini-3.1-pro-preview"
+DEFAULT_GEMINI_IMAGE_MODEL = "gemini-3-pro-image"
+GEMINI_MODEL_REPLACEMENTS = {
+    "gemini-3-pro-preview": DEFAULT_GEMINI_TEXT_MODEL,
+    "gemini-3-pro-image-preview": DEFAULT_GEMINI_IMAGE_MODEL,
+}
+
+
+def _gemini_model_from_env(env_name, default_model):
+    model_name = os.environ.get(env_name, default_model).strip()
+    model_key = model_name.removeprefix("models/")
+    replacement = GEMINI_MODEL_REPLACEMENTS.get(model_key)
+    if replacement:
+        print(f"⚠️ {env_name}={model_name} indisponível; usando {replacement}.")
+        return replacement
+    return model_name
+
+
+GEMINI_TEXT_MODEL = _gemini_model_from_env("GEMINI_TEXT_MODEL", DEFAULT_GEMINI_TEXT_MODEL)
+GEMINI_IMAGE_MODEL = _gemini_model_from_env("GEMINI_IMAGE_MODEL", DEFAULT_GEMINI_IMAGE_MODEL)
 
 # Configuração Mailchimp
 mc = MailchimpMarketing.Client()

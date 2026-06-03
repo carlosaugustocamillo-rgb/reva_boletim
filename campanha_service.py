@@ -83,7 +83,7 @@ def buscar_evidencia_cientifica(tema_pesquisa):
 
 def gerar_imagem_capa(tema):
     """
-    Gera uma imagem via Gemini (gemini-3-pro-image-preview) ou DALL-E 3 (fallback) e faz upload para o Firebase.
+    Gera uma imagem via Gemini (gemini-3-pro-image) ou DALL-E 3 (fallback) e faz upload para o Firebase.
     """
     print("🎨 Gerando imagem de capa...")
     
@@ -100,8 +100,8 @@ def gerar_imagem_capa(tema):
     
     # Tenta usar Gemini primeiro
     try:
-        print("   👉 Tentando Gemini (gemini-3-pro-image-preview)...")
-        model = genai.GenerativeModel('gemini-3-pro-image-preview')
+        print("   👉 Tentando Gemini (gemini-3-pro-image)...")
+        model = genai.GenerativeModel('gemini-3-pro-image')
         response = model.generate_content("Generate an image of: " + prompt_imagem)
         
         for part in response.parts:
