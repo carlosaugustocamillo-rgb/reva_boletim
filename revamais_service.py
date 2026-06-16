@@ -11,10 +11,9 @@ import mailchimp_marketing as MailchimpMarketing
 from mailchimp_marketing.api_client import ApiClientError
 import csv
 import shutil
-from tempfile import NamedTemporaryFile
 
 # Importa ferramentas já existentes
-from firebase_service import upload_file
+from firebase_service import get_firestore_db, read_json_from_storage, upload_file
 
 load_dotenv()
 
@@ -50,6 +49,10 @@ def _gemini_model_from_env(env_name, default_model):
 
 GEMINI_TEXT_MODEL = _gemini_model_from_env("GEMINI_TEXT_MODEL", DEFAULT_GEMINI_TEXT_MODEL)
 GEMINI_IMAGE_MODEL = _gemini_model_from_env("GEMINI_IMAGE_MODEL", DEFAULT_GEMINI_IMAGE_MODEL)
+
+REVAMAIS_STATE_COLLECTION = "revamais_state"
+REVAMAIS_STATE_DOC_ID = "editorial_calendar"
+REVAMAIS_LEGACY_STATE_FILE = "revamais/used_themes_state.json"
 
 # Configuração Mailchimp
 mc = MailchimpMarketing.Client()
@@ -684,96 +687,137 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
         },
     }
 
-from firebase_service import read_json_from_storage
+def _normalize_calendar_title(text):
+    return str(text or "").strip().lower()
+
+
+def _extract_calendar_title(row):
+    return row.get("Title", row.get("Theme", "")).strip()
+
+
+def _resolve_instagram_format(_row=None):
+    return "Carrossel"
+
+
+def _build_revamais_firestore_state(next_index, rows, source):
+    total_linhas = len(rows)
+    next_title = ""
+    next_format = "Carrossel"
+
+    for i in range(max(0, next_index), total_linhas):
+        titulo = _extract_calendar_title(rows[i])
+        if titulo:
+            next_title = titulo
+            next_format = _resolve_instagram_format(rows[i])
+            break
+
+    return {
+        "next_index": next_index,
+        "last_used_index": next_index - 1,
+        "next_title": next_title,
+        "next_format": next_format,
+        "total_rows": total_linhas,
+        "state_source": source,
+        "last_updated": datetime.now().isoformat(),
+    }
+
+
+def _load_revamais_calendar_state(rows):
+    db = get_firestore_db()
+    if db is None:
+        raise RuntimeError("Firestore indisponivel para controlar a agenda do Reva+.")
+
+    doc_ref = db.collection(REVAMAIS_STATE_COLLECTION).document(REVAMAIS_STATE_DOC_ID)
+    snapshot = doc_ref.get()
+    if snapshot.exists:
+        state = snapshot.to_dict() or {}
+        next_index = int(state.get("next_index", 0) or 0)
+        print(f"📊 Estado Firestore carregado. next_index={next_index}")
+        return doc_ref, state
+
+    legacy_state = read_json_from_storage(REVAMAIS_LEGACY_STATE_FILE) or {"used_titles": []}
+    used_titles = legacy_state.get("used_titles", [])
+    used_titles_normalized = {_normalize_calendar_title(t) for t in used_titles}
+
+    next_index = 0
+    for i, row in enumerate(rows):
+        titulo = _extract_calendar_title(row)
+        if titulo and _normalize_calendar_title(titulo) not in used_titles_normalized:
+            next_index = i
+            break
+    else:
+        next_index = len(rows)
+
+    migrated_state = _build_revamais_firestore_state(next_index, rows, source="migrated_from_storage")
+    migrated_state["legacy_used_titles_count"] = len(used_titles)
+    doc_ref.set(migrated_state)
+    print(
+        "✅ Estado da agenda migrado para Firestore "
+        f"(legacy used_titles={len(used_titles)}, next_index={next_index})."
+    )
+    return doc_ref, migrated_state
+
 
 def obter_proximo_tema_csv(consumir=True):
     """
-    Lê o calendário e usa o Firebase para persistir quais TEMAS já foram usados (Estado Global).
+    Lê o calendário editorial e usa um ponteiro remoto no Firestore
+    para persistir o próximo item da agenda do Reva+.
     """
     csv_filename = "calendario_editorial_150_semanas.csv"
     csv_path = os.path.join(os.path.dirname(__file__), csv_filename)
-    
+
     if not os.path.exists(csv_path):
         print(f"⚠️ Arquivo {csv_filename} não encontrado.")
         return None
-        
-    # 1. Carrega todas as linhas do CSV (Read-Only)
+
     rows = []
-    with open(csv_path, 'r', encoding='utf-8') as f:
+    with open(csv_path, "r", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         rows = list(reader)
-        
+
     total_linhas = len(rows)
-    
-    # 2. Busca estado atual no Firebase
-    state_file = "revamais/used_themes_state.json"
-    state_data = read_json_from_storage(state_file)
-    
-    if not state_data:
-        state_data = {"used_titles": []}
-        
-    used_titles = set(state_data.get("used_titles", []))
-    
-    # 3. Encontra o primeiro não utilizado
+    doc_ref, state_data = _load_revamais_calendar_state(rows)
+    next_index = int(state_data.get("next_index", 0) or 0)
+
     tema_escolhido = None
     formato_escolhido = "Carrossel"
-    idx_atual = 0
-    
-    # Normalização para comparação (Remove espaços extras e case insensitive)
-    def normalize(text):
-        return str(text).strip().lower()
+    idx_atual = None
 
-    used_titles_normalized = {normalize(t) for t in used_titles}
-    print(f"📊 Estado Carregado: {len(used_titles)} temas já utilizados.")
-    
-    for i, row in enumerate(rows):
-        titulo = row.get('Title', row.get('Theme', '')).strip()
-        titulo_norm = normalize(titulo)
-        
-        if titulo and titulo_norm not in used_titles_normalized:
+    for i in range(max(0, next_index), total_linhas):
+        titulo = _extract_calendar_title(rows[i])
+        if titulo:
             tema_escolhido = titulo
-            formato_escolhido = row.get('Format', 'Carrossel')
-            idx_atual = i + 1
+            formato_escolhido = _resolve_instagram_format(rows[i])
+            idx_atual = i
             break
-            
-    if tema_escolhido:
-        print(f"📅 Tema do Calendário Selecionado: {tema_escolhido} (Item {idx_atual}/{total_linhas})")
 
-        if consumir:
-            # 4. Atualiza estado e salva no Firebase
-            used_titles.add(tema_escolhido)
-            state_data["used_titles"] = list(used_titles)
-            state_data["last_updated"] = datetime.now().isoformat()
-
-            # Cria arquivo local temporário para upload
-            tmp_path = None
-            try:
-                # Usa prefixo para facilitar debug
-                with NamedTemporaryFile(mode='w', delete=False, suffix='.json', prefix='state_update_') as tmp:
-                    json.dump(state_data, tmp)
-                    tmp_path = tmp.name
-
-                print(f"💾 Tentando salvar estado atualizado ({len(used_titles)} itens) no Firebase...")
-                url_state = upload_file(tmp_path, state_file)
-
-                if url_state:
-                    print("✅ Estado atualizado com sucesso no Firebase.")
-                else:
-                    print("⚠️ FALHA SILENCIOSA ao salvar estado (upload_file retornou None). O tema vai repetir!")
-
-            except Exception as e_save:
-                print(f"❌ ERRO EXCEÇÃO ao salvar estado: {e_save}")
-            finally:
-                if tmp_path and os.path.exists(tmp_path):
-                    os.remove(tmp_path)
-             
-        return {
-            "tema": tema_escolhido,
-            "formato": formato_escolhido
-        }
-    else:
+    if not tema_escolhido:
         print("⚠️ Todos os temas do calendário já foram usados!")
         return None
+
+    print(f"📅 Tema do Calendário Selecionado: {tema_escolhido} (Item {idx_atual + 1}/{total_linhas})")
+
+    if consumir:
+        updated_state = _build_revamais_firestore_state(idx_atual + 1, rows, source="firestore")
+        updated_state["last_used_title"] = tema_escolhido
+        updated_state["last_used_format"] = formato_escolhido
+        updated_state["last_used_row_number"] = idx_atual + 1
+
+        try:
+            doc_ref.set(updated_state, merge=True)
+            print(
+                "✅ Estado da agenda atualizado no Firestore "
+                f"(next_index={updated_state['next_index']})."
+            )
+        except Exception as e_save:
+            raise RuntimeError(
+                "Falha ao persistir o progresso da agenda do Reva+ no Firestore."
+            ) from e_save
+
+    return {
+        "tema": tema_escolhido,
+        "formato": formato_escolhido,
+    }
 
 
 def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True):
@@ -789,7 +833,7 @@ def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True):
         if not dados_csv:
             return None
         tema = dados_csv["tema"]
-        formato_instagram = dados_csv.get("formato", "Carrossel")
+        formato_instagram = _resolve_instagram_format(dados_csv)
 
     return {
         "tema": tema,
