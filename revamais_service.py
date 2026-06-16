@@ -924,17 +924,20 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             ]
             
             RULES FOR 'image_prompt_english':
-            1.  **Visual Style**: Clean, Minimalist, "Apple-like" medical aesthetic. Teal/White color palette. High Quality.
-            2.  **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific '{{titulo}}' and '{{texto_curto}}' of the slide.
-            3.  **Density**: Avoid clutter. Use ONE central visual element (icon, illustration, or chart) that matches the text.
-            4.  **Text Instruction**: Explicitly state: "Include the text: '{{titulo}}' and '{{texto_curto}}' in the image. Typography must be legible, modern, sans-serif."
-            5.  **No Hallucinations**: Do not ask for logos.
-            
-            SLIDE STRUCTURE:
-            - Slide 1: Hook/Pain (Illustration of the symptom).
-            - Slide 2-3: Education (Simplified mechanism like 'Angiogenesis').
-            - Slide 4-6: Solutions (Exercises, Habits).
-            - Slide 7: CTA (Text: "Gostou? Siga @revalidatie_londrina").
+1. **Visual Style**: Realistic, high-quality, editorial medical photography aesthetic. Prefer photorealistic images over illustrations. Use natural lighting, clean composition, and a professional healthcare look.
+2. **People**: Whenever appropriate, include real-looking people in the scene, especially patients, physiotherapists, or adults in everyday health-related situations. Human presence should feel natural and credible, not artificial or cartoonish.
+3. **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific '{titulo}' and '{texto_curto}' of the slide.
+4. **Density**: Avoid clutter. Use ONE main scene or focal subject that clearly supports the message of the slide.
+5. **Text Instruction**: Explicitly state: "Include the text: '{titulo}' and '{texto_curto}' in the image. Typography must be legible, modern, sans-serif."
+6. **Consistency**: Keep a clean healthcare brand aesthetic, with soft and trustworthy tones, subtle teal accents when appropriate, and premium visual quality.
+7. **No Hallucinations**: Do not ask for logos, watermarks, icons, or cartoon elements unless strictly necessary for the concept.
+8. **Avoid Illustration Look**: Do not generate flat drawings, vector art, line art, infographic-style icons, or cartoon-style medical scenes unless the slide specifically requires a scientific mechanism that cannot be represented with realistic photography.
+
+SLIDE STRUCTURE:
+- Slide 1: Hook/Pain (Realistic scene showing the symptom or limitation in daily life).
+- Slide 2-3: Education (Realistic healthcare or body-related visual metaphors, or realistic clinical/support scenes).
+- Slide 4-6: Solutions (Realistic people exercising, receiving guidance, improving mobility, breathing, strength, or function).
+- Slide 7: CTA (Warm, realistic lifestyle or healthcare closing image with the CTA text).
             """
             
             try:
