@@ -1,7 +1,11 @@
 import os
 # Force Build 123
+import base64
 import requests
 import json
+import html
+import re
+from io import BytesIO
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import google.generativeai as genai
@@ -21,9 +25,27 @@ load_dotenv()
 Entrez.email = os.environ.get("ENTREZ_EMAIL")
 Entrez.api_key = os.environ.get("ENTREZ_API_KEY")
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-OPENAI_TEXT_MODEL = os.environ.get("OPENAI_TEXT_MODEL", "gpt-5.5")
-OPENAI_TEXT_MODEL_SEARCH = os.environ.get("OPENAI_TEXT_MODEL_SEARCH", OPENAI_TEXT_MODEL)
-OPENAI_TEXT_MODEL_WRITE = os.environ.get("OPENAI_TEXT_MODEL_WRITE", "gpt-5.5-pro")
+OPENAI_CHAT_MODEL_REPLACEMENTS = {
+    "gpt-5.5-pro": "gpt-5.5",
+}
+
+
+def _openai_chat_model_from_env(env_name, default_model):
+    model_name = os.environ.get(env_name, default_model).strip()
+    replacement = OPENAI_CHAT_MODEL_REPLACEMENTS.get(model_name)
+    if replacement:
+        print(f"⚠️ {env_name}={model_name} não é compatível com chat.completions; usando {replacement}.")
+        return replacement
+    return model_name
+
+
+OPENAI_TEXT_MODEL = _openai_chat_model_from_env("OPENAI_TEXT_MODEL", "gpt-5.5")
+OPENAI_TEXT_MODEL_SEARCH = _openai_chat_model_from_env("OPENAI_TEXT_MODEL_SEARCH", OPENAI_TEXT_MODEL)
+OPENAI_TEXT_MODEL_WRITE = _openai_chat_model_from_env("OPENAI_TEXT_MODEL_WRITE", OPENAI_TEXT_MODEL)
+OPENAI_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2").strip()
+OPENAI_IMAGE_QUALITY = os.environ.get("OPENAI_IMAGE_QUALITY", "high").strip()
+OPENAI_IMAGE_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_IMAGE_TIMEOUT_SECONDS", "180"))
+OPENAI_IMAGE_ENABLED = True
 
 # Configuração Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -66,7 +88,7 @@ MC_FROM_NAME = os.environ.get("MC_FROM_NAME", "Revalidatie")
 MC_REPLY_TO = os.environ.get("MC_REPLY_TO", "contato@revalidatie.com.br")
 
 
-def gerar_texto_openai(prompt, system_prompt=None, model_name=None):
+def gerar_texto_openai(prompt, system_prompt=None, model_name=None, timeout_seconds=None):
     """
     Gera texto com o modelo principal da OpenAI configurado para o projeto.
     """
@@ -79,18 +101,24 @@ def gerar_texto_openai(prompt, system_prompt=None, model_name=None):
     response = client.chat.completions.create(
         model=model_name,
         messages=messages,
+        timeout=timeout_seconds,
     )
     content = response.choices[0].message.content or ""
     return content.strip()
 
 
-def gerar_texto_preferencial(prompt, system_prompt=None, model_name=None):
+def gerar_texto_preferencial(prompt, system_prompt=None, model_name=None, timeout_seconds=None):
     """
     Usa OpenAI como primeira opção e Gemini como fallback para tarefas textuais.
     """
     model_name = model_name or OPENAI_TEXT_MODEL_SEARCH
     try:
-        return gerar_texto_openai(prompt, system_prompt=system_prompt, model_name=model_name)
+        return gerar_texto_openai(
+            prompt,
+            system_prompt=system_prompt,
+            model_name=model_name,
+            timeout_seconds=timeout_seconds,
+        )
     except Exception as e_openai:
         print(f"⚠️ Falha OpenAI ({model_name}): {e_openai}")
 
@@ -310,7 +338,9 @@ def buscar_referencias_pubmed(tema_ingles, limite_retorno=5):
                     "link": link,
                     "resumo": abstract,
                     "jif": jif,
-                    "journal": journal
+                    "journal": journal,
+                    "fonte": "PubMed",
+                    "source_label": "PubMed",
                 })
             except Exception as e:
                 continue
@@ -329,64 +359,629 @@ def buscar_referencias_pubmed(tema_ingles, limite_retorno=5):
         
     return candidates[:limite_retorno]
 
-def gerar_imagem(prompt, nome_arquivo_prefixo, keep_local=False, forced_filename=None):
+
+def _limpar_resposta_json(texto):
     """
-    Gera imagem via Gemini ou DALL-E e faz upload.
+    Extrai JSON de respostas de LLM que às vezes vêm com cercas Markdown.
     """
-    print(f"🎨 Gerando imagem ({nome_arquivo_prefixo})...")
+    texto = (texto or "").strip()
+    texto = texto.replace("```json", "").replace("```", "").strip()
+
+    try:
+        return json.loads(texto)
+    except Exception:
+        pass
+
+    for start_char, end_char in (("{", "}"), ("[", "]")):
+        start = texto.find(start_char)
+        end = texto.rfind(end_char)
+        if start != -1 and end != -1 and end > start:
+            try:
+                return json.loads(texto[start : end + 1])
+            except Exception:
+                continue
+
+    raise ValueError("Resposta do modelo não contém JSON válido.")
+
+
+def _extrair_doi(texto):
+    match = re.search(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", texto or "", flags=re.IGNORECASE)
+    if not match:
+        return ""
+    return match.group(0).rstrip(".,;)]}")
+
+
+def _normalizar_referencia_consensus(ref, index):
+    if not isinstance(ref, dict):
+        ref = {"texto": str(ref)}
+
+    titulo = str(ref.get("titulo") or ref.get("title") or "").strip()
+    autores = str(ref.get("autores") or ref.get("authors") or "").strip()
+    ano = str(ref.get("ano") or ref.get("year") or "").strip()
+    journal = str(ref.get("journal") or ref.get("revista") or "").strip()
+    doi = str(ref.get("doi") or "").strip()
+    link = str(ref.get("link") or ref.get("url") or "").strip()
+    tipo_estudo = str(ref.get("tipo_estudo") or ref.get("study_type") or "").strip()
+    achado = str(
+        ref.get("achado_principal")
+        or ref.get("consensus_claim")
+        or ref.get("claim")
+        or ref.get("conclusao")
+        or ""
+    ).strip()
+    resumo = str(ref.get("resumo") or ref.get("abstract") or ref.get("summary") or achado).strip()
+    texto = str(ref.get("texto") or ref.get("citation") or "").strip()
+
+    if not doi:
+        doi = _extrair_doi(" ".join([texto, link, resumo, achado]))
+    if not link and doi:
+        link = f"https://doi.org/{doi}"
+
+    if not texto:
+        partes = []
+        if autores:
+            partes.append(autores)
+        if titulo:
+            partes.append(titulo)
+        if journal or ano:
+            partes.append(", ".join([p for p in [journal, ano] if p]))
+        texto = ". ".join(partes).strip()
+
+    if not texto:
+        texto = f"Referência científica #{index + 1}"
+
+    if resumo and achado and achado not in resumo:
+        resumo = f"{resumo}\nAchado principal: {achado}"
+
+    return {
+        "pmid": str(ref.get("pmid") or "").strip() or None,
+        "texto": texto,
+        "link": link,
+        "resumo": resumo,
+        "jif": 0.0,
+        "journal": journal,
+        "doi": doi,
+        "tipo_estudo": tipo_estudo,
+        "achado_principal": achado,
+        "consensus_claim": achado,
+        "fonte": "Consensus",
+        "source_label": "Consensus",
+    }
+
+
+def _normalizar_relatorio_consensus(relatorio_texto):
+    texto = (relatorio_texto or "").replace("\r\n", "\n").replace("\r", "\n")
+    texto = re.sub(r"\n{3,}", "\n\n", texto)
+    return texto.strip()
+
+
+def _is_generic_consensus_theme(text):
+    normalized = str(text or "").strip().lower()
+    return normalized in {
+        "",
+        "relatório consensus",
+        "relatorio consensus",
+        "consensus report",
+        "consensus",
+    }
+
+
+def _looks_like_title_continuation(current_line, next_line):
+    current_line = str(current_line or "").strip()
+    next_line = str(next_line or "").strip()
+    if not current_line or not next_line:
+        return False
+
+    if len(next_line) > 80:
+        return False
+    if next_line.lower() in {"references", "evidence", "strength claim"}:
+        return False
+    if current_line.endswith((".", "?", "!")):
+        return False
+
+    if re.search(r"\b(e|de|do|da|dos|das|para|com|sem|versus|vs|x|ou)\s*$", current_line, re.IGNORECASE):
+        return True
+
+    next_word_count = len(next_line.split())
+    if next_word_count <= 4 and next_line[:1].islower():
+        return True
+
+    return False
+
+
+def _infer_tema_from_consensus_report(relatorio_texto):
+    texto = _normalizar_relatorio_consensus(relatorio_texto)
+    if not texto:
+        return ""
+
+    linhas = []
+    for linha in texto.splitlines():
+        linha = re.sub(r"\s+", " ", linha).strip(" -:\t")
+        if not linha:
+            continue
+        if re.fullmatch(r"\d+\s*/\s*\d+", linha):
+            continue
+        if linha.lower() in {"references", "evidence", "strength claim"}:
+            continue
+        linhas.append(linha)
+        if len(linhas) >= 8:
+            break
+
+    for idx, linha in enumerate(linhas):
+        if len(linha) < 20 or len(linha) > 180:
+            continue
+        if _is_generic_consensus_theme(linha):
+            continue
+        if not re.search(r"[A-Za-zÀ-ÿ]", linha):
+            continue
+
+        if idx + 1 < len(linhas):
+            proxima = linhas[idx + 1]
+            if _looks_like_title_continuation(linha, proxima):
+                combinado = f"{linha} {proxima}".strip()
+                if len(combinado) <= 200:
+                    return combinado.rstrip(" .")
+
+        return linha.rstrip(" .")
+
+    return ""
+
+
+def _resolve_consensus_theme(preferred_theme, parsed_theme, relatorio_texto):
+    for candidate in [
+        preferred_theme,
+        parsed_theme,
+        _infer_tema_from_consensus_report(relatorio_texto),
+    ]:
+        candidate = str(candidate or "").strip()
+        if candidate and not _is_generic_consensus_theme(candidate):
+            return candidate
+    return "Tema clínico do relatório"
+
+
+def extrair_texto_pdf_consensus(pdf_bytes):
+    """
+    Extrai texto bruto de um PDF do Consensus.
+    """
+    try:
+        from pypdf import PdfReader
+    except ImportError as e:
+        raise RuntimeError(
+            "Dependência ausente para leitura de PDF. Instale 'pypdf' no ambiente do projeto."
+        ) from e
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+    partes = []
+    for page in reader.pages:
+        try:
+            partes.append(page.extract_text() or "")
+        except Exception:
+            continue
+
+    texto = _normalizar_relatorio_consensus("\n\n".join(partes))
+    if len(texto) < 100:
+        raise RuntimeError("Não foi possível extrair texto suficiente do PDF do Consensus.")
+    return texto
+
+
+def _extrair_referencias_da_secao_consensus(relatorio_texto, limite_retorno=None):
+    marcador = relatorio_texto.lower().find("references")
+    if marcador == -1:
+        return []
+
+    secao = relatorio_texto[marcador + len("references") :]
+    linhas = [linha.strip() for linha in secao.splitlines()]
+    referencias = []
+    bloco_atual = []
+
+    for linha in linhas:
+        if not linha:
+            continue
+        if re.fullmatch(r"\d+\s*/\s*\d+", linha):
+            continue
+        if linha.startswith("•"):
+            continue
+
+        bloco_atual.append(linha)
+        if "doi.org/" in linha.lower() or re.search(r"\b10\.\d{4,9}/", linha, re.IGNORECASE):
+            bloco = " ".join(bloco_atual)
+            bloco_atual = []
+            bloco = re.sub(r"\s+", " ", bloco).strip()
+            if len(bloco) < 40:
+                continue
+            doi = _extrair_doi(bloco)
+            referencias.append(
+                _normalizar_referencia_consensus(
+                    {
+                        "texto": bloco[:500].rstrip(" ."),
+                        "resumo": bloco[:1200],
+                        "doi": doi,
+                        "link": f"https://doi.org/{doi}" if doi else "",
+                    },
+                    len(referencias),
+                )
+            )
+            if limite_retorno and len(referencias) >= limite_retorno:
+                break
+
+    return referencias
+
+
+def _extrair_referencias_consensus_fallback(relatorio_texto, limite_retorno=None):
+    """
+    Fallback simples para quando o LLM não consegue estruturar o relatório.
+    Mantém o fluxo testável, mas a qualidade depende da curadoria manual.
+    """
+    referencias_secao = _extrair_referencias_da_secao_consensus(relatorio_texto, limite_retorno)
+    if referencias_secao:
+        return referencias_secao
+
+    blocos = re.split(
+        r"\n\s*\n|(?=^\s*\d+[\).\s])",
+        relatorio_texto or "",
+        flags=re.MULTILINE,
+    )
+    referencias = []
+
+    for bloco in blocos:
+        bloco = " ".join(bloco.split())
+        if len(bloco) < 80:
+            continue
+        if not (
+            re.search(r"\b(19|20)\d{2}\b", bloco)
+            or "doi" in bloco.lower()
+            or "et al" in bloco.lower()
+        ):
+            continue
+
+        doi = _extrair_doi(bloco)
+        resumo = bloco[:1200]
+        texto = bloco[:320].rstrip(" .")
+        referencias.append(
+            _normalizar_referencia_consensus(
+                {
+                    "texto": texto,
+                    "resumo": resumo,
+                    "doi": doi,
+                    "link": f"https://doi.org/{doi}" if doi else "",
+                },
+                len(referencias),
+            )
+        )
+        if limite_retorno and len(referencias) >= limite_retorno:
+            break
+
+    return referencias
+
+
+def extrair_referencias_consensus(relatorio_texto, tema_usuario=None, limite_retorno=None):
+    """
+    Converte o relatório copiado/exportado do Consensus em referências no mesmo
+    formato usado pela curadoria manual do Reva+.
+    """
+    relatorio_texto = _normalizar_relatorio_consensus(relatorio_texto)
+    if len(relatorio_texto) < 200:
+        return {
+            "tema": (tema_usuario or "").strip(),
+            "referencias": [],
+            "erro": "O relatório do Consensus está muito curto para extração.",
+        }
+
+    # Primeiro usa um parser local para evitar que a UI fique bloqueada
+    # esperando LLM em textos longos/instáveis.
+    referencias_fallback = _extrair_referencias_consensus_fallback(
+        relatorio_texto,
+        limite_retorno,
+    )
+    if referencias_fallback:
+        return {
+            "tema": (tema_usuario or "").strip(),
+            "referencias": referencias_fallback[:limite_retorno] if limite_retorno else referencias_fallback,
+            "erro": "Extração rápida local aplicada; revise as referências antes de gerar o Reva+.",
+        }
+
+    regra_limite = (
+        f"- Retorne no máximo {limite_retorno} referências."
+        if limite_retorno
+        else "- Retorne todas as referências explícitas do relatório."
+    )
+
+    prompt = f"""
+Você receberá um relatório gerado pelo Consensus.app. Extraia apenas estudos/referências que estejam explicitamente presentes no texto.
+
+Tema informado pelo usuário: "{tema_usuario or ''}"
+
+Retorne APENAS JSON válido, sem Markdown, neste formato:
+{{
+  "tema": "tema médico em português, curto e fiel ao relatório",
+  "referencias": [
+    {{
+      "titulo": "título do estudo",
+      "autores": "Primeiro autor et al. ou autores disponíveis",
+      "ano": "ano",
+      "journal": "revista, se disponível",
+      "doi": "DOI, se disponível",
+      "link": "URL do paper/DOI, se disponível",
+      "tipo_estudo": "systematic review, RCT, guideline, cohort, etc., se disponível",
+      "achado_principal": "conclusão ou achado do Consensus em 1-2 frases",
+      "resumo": "resumo do achado relevante para pacientes, sem inventar dados"
+    }}
+  ]
+}}
+
+Regras:
+- Não invente autores, títulos, DOI, revista, ano, números ou resultados.
+- Se uma informação bibliográfica não estiver no relatório, deixe vazia.
+- Priorize revisões sistemáticas, meta-análises, ensaios clínicos, guidelines e estudos diretamente ligados ao tema.
+{regra_limite}
+
+RELATÓRIO CONSENSUS:
+---
+{relatorio_texto[:30000]}
+---
+"""
+
+    try:
+        resposta = gerar_texto_preferencial(
+            prompt,
+            system_prompt="You extract structured scientific references from Consensus.app reports. Return strict JSON only.",
+            model_name=OPENAI_TEXT_MODEL_SEARCH,
+            timeout_seconds=20,
+        )
+        dados = _limpar_resposta_json(resposta)
+        if isinstance(dados, list):
+            dados = {"tema": tema_usuario or "", "referencias": dados}
+
+        referencias_raw = dados.get("referencias") if isinstance(dados, dict) else []
+        referencias = [
+            _normalizar_referencia_consensus(ref, index)
+            for index, ref in enumerate(referencias_raw or [])
+        ]
+        referencias = [ref for ref in referencias if ref.get("texto") or ref.get("resumo")]
+
+        return {
+            "tema": (tema_usuario or "").strip() or str(dados.get("tema") or "").strip(),
+            "referencias": referencias[:limite_retorno] if limite_retorno else referencias,
+            "erro": "",
+        }
+    except Exception as e:
+        print(f"⚠️ Falha ao estruturar relatório Consensus com LLM: {e}")
+        return {
+            "tema": (tema_usuario or "").strip(),
+            "referencias": _extrair_referencias_consensus_fallback(relatorio_texto, limite_retorno),
+            "erro": str(e),
+        }
+
+
+def preparar_referencias_consensus_revamais(tema_usuario=None, relatorio_texto="", quantidade_referencias=None, calendar_index=None):
+    relatorio_texto = _normalizar_relatorio_consensus(relatorio_texto)
+    dados_tema = None
+    if calendar_index is not None:
+        dados_tema = resolver_tema_revamais(
+            tema_usuario=tema_usuario,
+            consumir_tema_auto=False,
+            calendar_index=calendar_index,
+        )
+        if not dados_tema:
+            raise RuntimeError("Não foi possível resolver o item do calendário selecionado.")
+
+    tema_base = (dados_tema or {}).get("tema") or (tema_usuario or "").strip()
+    resultado = extrair_referencias_consensus(
+        relatorio_texto=relatorio_texto,
+        tema_usuario=tema_base,
+        limite_retorno=quantidade_referencias,
+    )
+
+    tema = _resolve_consensus_theme(
+        tema_base,
+        resultado.get("tema"),
+        relatorio_texto,
+    )
+    referencias = resultado.get("referencias") or []
+    instagram_format = (dados_tema or {}).get("formato_instagram") or "Carrossel"
+
+    if not referencias:
+        return {
+            "status": "error",
+            "message": resultado.get("erro") or "Nenhuma referência foi extraída do relatório Consensus.",
+            "tema": tema,
+            "tema_ingles": tema,
+            "instagram_format": instagram_format,
+            "calendar_index": (dados_tema or {}).get("calendar_index"),
+            "referencias_sugeridas": [],
+            "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
+            "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+            "fonte_referencias": "Consensus",
+            "relatorio_consensus": relatorio_texto,
+            "auto_select_all_references": True,
+        }
+
+    return {
+        "status": "success",
+        "tema": tema,
+        "tema_ingles": tema,
+        "instagram_format": instagram_format,
+        "calendar_index": (dados_tema or {}).get("calendar_index"),
+        "referencias_sugeridas": referencias,
+        "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
+        "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+        "fonte_referencias": "Consensus",
+        "parser_warning": resultado.get("erro") or "",
+        "relatorio_consensus": relatorio_texto,
+        "auto_select_all_references": True,
+        "total_referencias_importadas": len(referencias),
+    }
+
+
+def render_referencias_html_items(referencias):
+    if not referencias:
+        return "<li>Referências não disponíveis neste momento.</li>"
+
+    items = []
+    for ref in referencias:
+        texto = html.escape(str(ref.get("texto") or "Referência sem título"), quote=True)
+        link = html.escape(str(ref.get("link") or ""), quote=True)
+        link_html = f" <a href='{link}' target='_blank' rel='noreferrer'>[Link do artigo]</a>" if link else ""
+        items.append(f"<li>{texto}{link_html}</li>")
+
+    return "".join(items)
+
+def gerar_imagem(
+    prompt,
+    nome_arquivo_prefixo,
+    keep_local=False,
+    forced_filename=None,
+    log_callback=None,
+    image_size="1024x1024",
+    target_aspect_ratio=None,
+):
+    """
+    Gera imagem via OpenAI e usa Gemini apenas como fallback técnico.
+    """
+    def emit_log(message):
+        print(message)
+        if log_callback:
+            try:
+                log_callback(message)
+            except Exception:
+                pass
+
+    emit_log(f"🎨 Gerando imagem ({nome_arquivo_prefixo})...")
+    text_language_policy = (
+        "IMAGE LANGUAGE POLICY: Any visible text rendered inside the image must be exclusively in Brazilian Portuguese (PT-BR). "
+        "Never use English, Spanish, mixed language, bilingual headings, untranslated labels, or multilingual captions. "
+        "If you cannot render correct PT-BR text with high confidence, do not render any visible text at all. "
+        "Do not mix Portuguese with any other language anywhere in the image. "
+    )
+    prompt = f"{text_language_policy}{prompt}"
+
     if forced_filename:
         temp_filename = forced_filename
     else:
         temp_filename = f"temp_{nome_arquivo_prefixo}_{datetime.now().strftime('%H%M%S')}.png"
     
+    global OPENAI_IMAGE_ENABLED
     image_generated = False
-    
-    # Tenta Gemini
-    try:
-        model = genai.GenerativeModel(GEMINI_IMAGE_MODEL)
-        response = model.generate_content("Generate an image of: " + prompt)
-        for part in response.parts:
-            if hasattr(part, 'inline_data') and part.inline_data:
-                with open(temp_filename, "wb") as f:
-                    f.write(part.inline_data.data)
-                image_generated = True
-                break
-    except Exception as e:
-        print(f"   ⚠️ Erro Gemini Imagem: {e}")
 
-    # Fallback DALL-E
+    # Tenta OpenAI primeiro (GPT Image / ChatGPT image stack)
+    if OPENAI_IMAGE_ENABLED:
+        try:
+            emit_log(
+                f"   ☁️ Solicitando imagem à OpenAI ({OPENAI_IMAGE_MODEL}, size={image_size}, quality={OPENAI_IMAGE_QUALITY}, timeout={OPENAI_IMAGE_TIMEOUT_SECONDS}s)..."
+            )
+            response = client.images.generate(
+                model=OPENAI_IMAGE_MODEL,
+                prompt=prompt,
+                size=image_size,
+                quality=OPENAI_IMAGE_QUALITY,
+                output_format="png",
+                timeout=OPENAI_IMAGE_TIMEOUT_SECONDS,
+            )
+            if getattr(response, "data", None):
+                image_data = response.data[0]
+                if getattr(image_data, "b64_json", None):
+                    with open(temp_filename, "wb") as f:
+                        f.write(base64.b64decode(image_data.b64_json))
+                    image_generated = True
+                    emit_log(f"   ✅ Imagem gerada com OpenAI ({OPENAI_IMAGE_MODEL}).")
+                elif getattr(image_data, "url", None):
+                    img_data = requests.get(image_data.url, timeout=60).content
+                    with open(temp_filename, "wb") as f:
+                        f.write(img_data)
+                    image_generated = True
+                    emit_log(f"   ✅ Imagem gerada com OpenAI ({OPENAI_IMAGE_MODEL}) via URL.")
+                else:
+                    emit_log(f"   ⚠️ OpenAI ({OPENAI_IMAGE_MODEL}) não retornou imagem utilizável. Tentando fallback.")
+        except Exception as e:
+            error_text = str(e)
+            if "billing_hard_limit_reached" in error_text or "Billing hard limit has been reached" in error_text:
+                OPENAI_IMAGE_ENABLED = False
+                emit_log(
+                    f"   ⚠️ OpenAI Imagem indisponível por limite de billing ({OPENAI_IMAGE_MODEL}). "
+                    "As próximas imagens desta execução usarão Gemini diretamente."
+                )
+            else:
+                emit_log(f"   ⚠️ Erro OpenAI Imagem ({OPENAI_IMAGE_MODEL}): {e}")
+    else:
+        emit_log(
+            f"   ⏩ OpenAI Imagem desativada nesta execução após erro de billing. Usando Gemini para ({nome_arquivo_prefixo})."
+        )
+
+    # Fallback técnico para Gemini se OpenAI falhar
     if not image_generated:
         try:
-            response = client.images.generate(
-                model="dall-e-3",
-                prompt=prompt,
-                size="1024x1024",
-                quality="standard",
-                n=1,
-            )
-            img_data = requests.get(response.data[0].url).content
-            with open(temp_filename, "wb") as f:
-                f.write(img_data)
-            image_generated = True
+            emit_log(f"   ☁️ Tentando fallback Gemini ({GEMINI_IMAGE_MODEL})...")
+            model = genai.GenerativeModel(GEMINI_IMAGE_MODEL)
+            response = model.generate_content("Generate an image of: " + prompt)
+            for part in response.parts:
+                if hasattr(part, 'inline_data') and part.inline_data:
+                    with open(temp_filename, "wb") as f:
+                        f.write(part.inline_data.data)
+                    image_generated = True
+                    emit_log(f"   ✅ Imagem gerada com Gemini ({GEMINI_IMAGE_MODEL}) em fallback.")
+                    break
         except Exception as e:
-            print(f"   ❌ Erro DALL-E: {e}")
-            return "https://via.placeholder.com/600x400?text=Reva+Mais"
+            emit_log(f"   ❌ Erro Gemini Imagem ({GEMINI_IMAGE_MODEL}): {e}")
+            if target_aspect_ratio == (16, 9):
+                return "https://via.placeholder.com/1280x720?text=Reva+Mais"
+            return "https://via.placeholder.com/1024x1024?text=Reva+Mais"
+
+    if target_aspect_ratio:
+        try:
+            ajustar_arquivo_aspect_ratio(temp_filename, target_aspect_ratio)
+            emit_log(f"   🪄 Ajuste final aplicado para {target_aspect_ratio[0]}:{target_aspect_ratio[1]}.")
+        except Exception as e:
+            emit_log(f"   ⚠️ Não foi possível ajustar aspect ratio ({nome_arquivo_prefixo}): {e}")
 
     # Upload
     try:
         timestamp_upload = datetime.now().strftime('%Y%m%d_%H%M%S')
         firebase_path = f"revamais/{nome_arquivo_prefixo}_{timestamp_upload}.png"
+        emit_log(f"   ⬆️ Fazendo upload da imagem ({nome_arquivo_prefixo})...")
         url = upload_file(temp_filename, firebase_path)
         if not keep_local and os.path.exists(temp_filename): 
             os.remove(temp_filename)
+        emit_log(f"   ✅ Upload concluído ({nome_arquivo_prefixo}).")
         return url
     except Exception as e:
-        print(f"   ❌ Erro Upload: {e}")
+        emit_log(f"   ❌ Erro Upload ({nome_arquivo_prefixo}): {e}")
         return "https://via.placeholder.com/600x400?text=Erro+Upload"
     
 # --- Novos Imports para Manipulação de Imagem ---
 from PIL import Image, ImageDraw, ImageFont
 import io
+
+
+def ajustar_arquivo_aspect_ratio(image_path, target_aspect_ratio):
+    if not image_path or not target_aspect_ratio:
+        return
+
+    aspect_w, aspect_h = target_aspect_ratio
+    if not aspect_w or not aspect_h:
+        return
+
+    target_ratio = float(aspect_w) / float(aspect_h)
+
+    with Image.open(image_path) as image:
+        width, height = image.size
+        if not width or not height:
+            return
+
+        current_ratio = width / height
+        if abs(current_ratio - target_ratio) < 0.01:
+            return
+
+        if current_ratio > target_ratio:
+            new_width = int(height * target_ratio)
+            left = max(0, (width - new_width) // 2)
+            crop_box = (left, 0, left + new_width, height)
+        else:
+            new_height = int(width / target_ratio)
+            top = max(0, (height - new_height) // 2)
+            crop_box = (0, top, width, top + new_height)
+
+        cropped = image.crop(crop_box)
+        cropped.save(image_path)
 
 def download_font():
     """Baixa fonte Roboto-Bold para garantir consistência visual em Linux/Railway"""
@@ -491,11 +1086,28 @@ def estimar_custo_revamais():
     total_brl = total_usd * 6.0
     return {"usd": total_usd, "brl": total_brl}
 
-def gerar_conteudo_revamais(tema, referencias):
+def gerar_conteudo_revamais(tema, referencias, relatorio_consensus=None):
     """
     Gera o conteúdo HTML do boletim.
     """
     print("✍️ Escrevendo conteúdo Reva +...")
+    relatorio_consensus = _normalizar_relatorio_consensus(relatorio_consensus)
+
+    bloco_consensus = ""
+    if relatorio_consensus:
+        bloco_consensus = f"""
+        CONTEXTO EVIDENCIAL PRIORIZADO (USO INTERNO DE REDAÇÃO):
+        - Use o material abaixo como base principal para os achados específicos do texto.
+        - Use as referências extraídas para apoiar o bloco científico e a bibliografia final.
+        - Se houver conflito entre conhecimento geral e o material abaixo, prevalece o material abaixo.
+        - Nunca mencione, no texto final, a plataforma usada, o relatório importado, o PDF, o processo de extração ou a origem operacional dessas evidências.
+        - No texto publicado, apresente os achados como provenientes dos estudos e da evidência científica disponível.
+        - Preserve a estrutura HTML já solicitada abaixo; não crie seções novas.
+
+        --- MATERIAL EVIDENCIAL PRIORIZADO ---
+        {relatorio_consensus[:24000]}
+        -------------------------------------------
+        """
 
     prompt = f"""
     Você é o editor do "Reva +", um boletim de saúde da clínica Revalidatie.
@@ -510,18 +1122,25 @@ def gerar_conteudo_revamais(tema, referencias):
        - Explique O PORQUÊ (Fisiologia/Mecanismo): Por que isso acontece? O que muda no corpo com o tratamento? (Ex: fale sobre circulação colateral, eficiência muscular, neuroplasticidade).
        - O usuário GOSTA dessa explicação educativa do "como funciona".
     
-    2. **O Que a Ciência Diz (Baseado SOMENTE nos artigos selecionados abaixo)**:
-       - Agora, cite as evidências fornecidas.
-       - Use os abstracts para validar a explicação anterior.
-       - Diga "Estudos recentes mostram que..." e use os dados dos resumos.
+    2. **O Que a Ciência Diz (Baseado SOMENTE nas fontes científicas fornecidas abaixo)**:
+       - Agora, sintetize as evidências fornecidas em uma visão geral coesa.
+       - Use os resumos e referências extraídas para validar a explicação anterior.
+       - Combine convergências, nuances e limites dos estudos em vez de fazer um mini-resumo desconectado de cada artigo.
+       - Diga "Estudos recentes mostram que..." ou equivalente e use os dados dos resumos.
+       - Se usar bullets, prefira 3 a 5 bullets temáticos, cada um integrando mais de um estudo quando isso fizer sentido.
+       - Pode citar autores/ano dentro dos bullets, mas apenas para sustentar uma síntese, não como ficha isolada de artigo.
 
     REGRAS DE SEGURANÇA E FIDELIDADE:
     - Não invente números, magnitude de efeito, tempo de intervenção, perfil de pacientes ou conclusões.
-    - Não cite estudos que não estejam na lista abaixo.
-    - Se um detalhe não estiver explícito nos resumos, não mencione esse detalhe.
+    - Não cite estudos que não estejam no material evidencial abaixo ou na lista de referências abaixo.
+    - Se um detalhe não estiver explícito no relatório ou nos resumos, não mencione esse detalhe.
     - Se a evidência parecer preliminar, heterogênea ou limitada, diga isso com cautela.
     - Use linguagem prudente: "sugere", "indica", "aponta", "pode ajudar", quando apropriado.
-    - Na seção de ciência, organize os achados em uma lista HTML (<ul><li>) com 1 item por artigo ou achado principal.
+    - Nunca escreva expressões como "segundo o Consensus", "o relatório Consensus mostrou", "de acordo com o relatório importado", "extraído do PDF" ou equivalentes.
+    - Nunca mencione bastidores da curadoria, da importação ou da plataforma de busca.
+    - Na seção de ciência, abra com 1 parágrafo curto de síntese geral e, se quiser, complemente com uma lista HTML (<ul><li>) de 3 a 5 bullets temáticos integrados.
+
+    {bloco_consensus}
     
     --- EVIDÊNCIA CIENTÍFICA (Para a seção 'O Que a Ciência Diz') ---
     {chr(10).join([ f'Artigo {i+1}: {r["texto"]}{chr(10)}Resumo: {r["resumo"]}{chr(10)}' for i, r in enumerate(referencias) ])}
@@ -532,7 +1151,7 @@ def gerar_conteudo_revamais(tema, referencias):
     
     1. <h1>Título Atraente e Emocional</h1>
     2. <p>Introdução empática + Explicação do Mecanismo (Por que dói? Por que melhora? - Use conhecimento geral de fisiologia).</p>
-    3. <h2>O que a Ciência Comprova?</h2> (Aqui você insere a "tradução" dos abstracts acima, conectando com a explicação).
+    3. <h2>O que a Ciência Comprova?</h2> (Abra com uma síntese geral e depois traga bullets temáticos integrando os estudos, conectando com a explicação).
     4. <h2>Dicas Práticas</h2> (Conselhos acionáveis baseados nos abstracts e boas práticas).
     5. <div class="cta"> (Convite para seguir @revalidatie_londrina).
     
@@ -586,7 +1205,7 @@ def extrair_secao_html(html, h2_regex):
     import re
 
     pattern = re.compile(
-        rf'<h2[^>]*>\s*{h2_regex}\s*</h2>(.*?)(?=<h2[^>]*>|$)',
+        rf'<h2[^>]*>\s*{h2_regex}\s*</h2>(.*?)(?=<h2[^>]*>|<div[^>]*class=["\'][^"\']*cta[^"\']*["\'][^>]*>|$)',
         re.IGNORECASE | re.DOTALL,
     )
     match = pattern.search(html)
@@ -595,10 +1214,58 @@ def extrair_secao_html(html, h2_regex):
     return limpar_texto_html(match.group(1))
 
 
+def extrair_titulo_html(html_texto):
+    match = re.search(r"<h1[^>]*>(.*?)</h1>", html_texto or "", re.IGNORECASE | re.DOTALL)
+    if not match:
+        return ""
+    return limpar_texto_html(match.group(1))
+
+
+def extrair_intro_html(html_texto):
+    html_texto = html_texto or ""
+    match_h2 = re.search(r"<h2[^>]*>", html_texto, re.IGNORECASE)
+    trecho = html_texto[: match_h2.start()] if match_h2 else html_texto
+    paragraphs = re.findall(r"<p[^>]*>(.*?)</p>", trecho, re.IGNORECASE | re.DOTALL)
+    for paragraph in paragraphs:
+        texto = limpar_texto_html(paragraph)
+        if texto:
+            return texto
+    return limpar_texto_html(trecho)[:500]
+
+
+def resumir_texto_para_legenda(texto, max_chars=220):
+    texto = re.sub(r"\s+", " ", str(texto or "").replace("•", ". ")).strip(" -")
+    if not texto:
+        return ""
+
+    frases = [frase.strip(" -") for frase in re.split(r"(?<=[.!?])\s+", texto) if frase.strip()]
+    escolhidas = []
+
+    for frase in frases:
+        candidata = " ".join(escolhidas + [frase]).strip()
+        if len(candidata) > max_chars and escolhidas:
+            break
+        escolhidas.append(frase)
+        if len(" ".join(escolhidas)) >= int(max_chars * 0.75) or len(escolhidas) >= 2:
+            break
+
+    resumo = " ".join(escolhidas).strip() or texto
+    if len(resumo) > max_chars:
+        corte = resumo[:max_chars].rsplit(" ", 1)[0].strip() or resumo[:max_chars].strip()
+        resumo = f"{corte}..."
+
+    if resumo and resumo[-1] not in ".!?":
+        resumo = f"{resumo}."
+
+    return resumo
+
+
 def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     """
     Gera prompts visuais mais ancorados no conteúdo final do boletim.
     """
+    titulo_boletim = extrair_titulo_html(html_texto)
+    intro_boletim = extrair_intro_html(html_texto)
     secao_ciencia = extrair_secao_html(html_texto, r"O\s+que\s+a\s+Ci[eê]ncia\s+Comprova\??")
     secao_dicas = extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas")
     texto_limpo = limpar_texto_html(html_texto)
@@ -613,11 +1280,12 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     ) or "- Sem referências resumidas."
 
     prompt_briefs = f"""
-    You are creating two grounded image prompts for a patient-facing medical newsletter.
+    You are creating three grounded image prompts for a patient-facing medical newsletter.
     Return ONLY valid JSON with this exact shape:
     {{
-      "ciencia": {{"prompt_english": "..."}},
-      "dicas": {{"prompt_english": "..."}}
+      "abertura": {{"prompt_english": "..."}},
+      "ciencia": {{"prompt_english": "...", "caption_ptbr": "..."}},
+      "dicas": {{"prompt_english": "...", "caption_ptbr": "..."}}
     }}
 
     RULES:
@@ -625,13 +1293,30 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     - Avoid generic wellness visuals, random symbols, and concepts not present in the content.
     - Prefer concrete anatomy, physiology, movement, rehabilitation actions, daily habits, or evidence concepts explicitly present in the text.
     - Visual style: premium editorial medical infographic, clean, minimal, white background, high contrast, lots of whitespace.
+    - The "abertura" image must work as a newsletter opening image and immediately communicate the actual clinical subject of the bulletin.
+    - The "abertura" image must be a simple subject image only: no explanation, no infographic layout, no multi-step sequence, no mechanism summary, no didactic labels.
+    - The "abertura" image must be composed as a wide horizontal banner in 16:9, with the subject centered and safe margins.
+    - The "abertura" image must not look like a business meeting, office teamwork, corporate consulting, conference room, presentation deck, startup discussion, or generic lifestyle stock photo.
+    - The "abertura" image should show a concrete patient/condition/exercise/rehabilitation scene consistent with the title and introduction.
+    - The "abertura" image must contain no visible text at all.
     - The "ciencia" image must explain the actual mechanism or evidence narrative from the science section.
     - The "dicas" image must show only the practical actions or habits explicitly recommended in the tips section.
+    - The "ciencia" and "dicas" images will receive an external HTML caption below them, so avoid dense text inside the image. Prefer no text or at most one very short PT-BR label if absolutely necessary.
     - No logos, no brand marks, no clutter, no unrelated charts.
-    - If short labels are useful, include at most 2 or 3 labels in Portuguese. If unsure, request no text.
+    - If short labels are useful, include at most 1 short label in Brazilian Portuguese (PT-BR) only.
+    - Never mix languages. Never use English headings, English labels, bilingual text, or untranslated interface words.
+    - If you are not fully confident that all visible text will be correct PT-BR, request no text.
+    - Each "caption_ptbr" must be 1 or 2 short sentences in natural Brazilian Portuguese, self-contained, clear for a patient, and directly explanatory of that visual.
+    - Each "caption_ptbr" must not mention "imagem", "figura", "newsletter", "boletim" or the generation process.
 
     THEME:
     {tema}
+
+    NEWSLETTER TITLE:
+    {titulo_boletim}
+
+    INTRODUCTION:
+    {intro_boletim}
 
     SELECTED STUDIES:
     {referencias_contexto}
@@ -657,24 +1342,49 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
 
         if (
             isinstance(briefs, dict)
+            and isinstance(briefs.get("abertura"), dict)
             and isinstance(briefs.get("ciencia"), dict)
             and isinstance(briefs.get("dicas"), dict)
+            and briefs["abertura"].get("prompt_english")
             and briefs["ciencia"].get("prompt_english")
             and briefs["dicas"].get("prompt_english")
         ):
+            briefs["ciencia"]["caption_ptbr"] = resumir_texto_para_legenda(
+                briefs["ciencia"].get("caption_ptbr") or secao_ciencia,
+                max_chars=220,
+            )
+            briefs["dicas"]["caption_ptbr"] = resumir_texto_para_legenda(
+                briefs["dicas"].get("caption_ptbr") or secao_dicas,
+                max_chars=220,
+            )
             return briefs
     except Exception as e:
         print(f"⚠️ Falha ao gerar briefs visuais do Reva+: {e}")
 
     return {
+        "abertura": {
+            "prompt_english": (
+                f"Create a simple photorealistic editorial opening image for the clinical topic '{tema}'. "
+                f"Newsletter title: '{titulo_boletim or tema}'. "
+                "Show only a concrete patient, body region, symptom, exercise, or rehabilitation scene directly about the subject. "
+                "Do not explain the article content, do not summarize mechanisms, and do not create an infographic. "
+                "Compose the scene as a wide horizontal banner (16:9) with the main subject centered and comfortable safe margins. "
+                "The image must feel like healthcare education, not corporate lifestyle. "
+                "No office meeting, no business discussion, no conference room, no people around a boardroom table, no startup scene, no generic teamwork. "
+                "No text, no labels, no charts. White or very clean background, premium composition, human-centered, medically coherent."
+            )
+        },
         "ciencia": {
             "prompt_english": (
                 f"Create a premium editorial medical infographic based strictly on this newsletter science section about '{tema}': "
                 f"{secao_ciencia[:900]} "
                 "Show the specific anatomy, physiology, rehabilitation mechanism, or evidence concept described in the text. "
                 "White background, minimal composition, high contrast, no clutter. "
-                "Include at most 2 or 3 short Portuguese labels only if clearly supported by the section; otherwise no text."
-            )
+                "An external HTML caption will explain the visual, so avoid dense text inside the image. "
+                "If labels are useful, include at most 1 short label in Brazilian Portuguese (PT-BR) only. "
+                "Never use English or mixed language. If text fidelity is uncertain, use no text."
+            ),
+            "caption_ptbr": resumir_texto_para_legenda(secao_ciencia, max_chars=220),
         },
         "dicas": {
             "prompt_english": (
@@ -682,8 +1392,11 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
                 f"{secao_dicas[:900]} "
                 "Show only the concrete actions, habits, or rehabilitation steps described in the text. "
                 "White background, checklist or step-by-step layout, minimal composition, high contrast, no clutter. "
-                "Include at most 2 or 3 short Portuguese labels only if clearly supported by the section; otherwise no text."
-            )
+                "An external HTML caption will explain the visual, so avoid dense text inside the image. "
+                "If labels are useful, include at most 1 short label in Brazilian Portuguese (PT-BR) only. "
+                "Never use English or mixed language. If text fidelity is uncertain, use no text."
+            ),
+            "caption_ptbr": resumir_texto_para_legenda(secao_dicas, max_chars=220),
         },
     }
 
@@ -695,12 +1408,71 @@ def _extract_calendar_title(row):
     return row.get("Title", row.get("Theme", "")).strip()
 
 
-def _resolve_instagram_format(_row=None):
+def _resolve_instagram_format(row=None):
+    if not isinstance(row, dict):
+        return "Carrossel"
+
+    valor = str(
+        row.get("Format")
+        or row.get("Formato")
+        or row.get("formato")
+        or ""
+    ).strip().lower()
+
+    if "reel" in valor:
+        return "Reel"
     return "Carrossel"
 
 
-def _build_revamais_firestore_state(next_index, rows, source):
+def _load_revamais_calendar_rows():
+    csv_filename = "calendario_editorial_150_semanas.csv"
+    csv_path = os.path.join(os.path.dirname(__file__), csv_filename)
+
+    if not os.path.exists(csv_path):
+        print(f"⚠️ Arquivo {csv_filename} não encontrado.")
+        return []
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def _coerce_completed_indices(state_data, rows):
     total_linhas = len(rows)
+    raw_completed = state_data.get("completed_indices") if isinstance(state_data, dict) else None
+    completed = set()
+
+    if isinstance(raw_completed, list):
+        for item in raw_completed:
+            try:
+                idx = int(item)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < total_linhas and _extract_calendar_title(rows[idx]):
+                completed.add(idx)
+    else:
+        next_index = int((state_data or {}).get("next_index", 0) or 0)
+        for idx in range(max(0, min(next_index, total_linhas))):
+            if _extract_calendar_title(rows[idx]):
+                completed.add(idx)
+
+    return completed
+
+
+def _compute_next_pending_index(rows, completed_indices):
+    for idx, row in enumerate(rows):
+        if _extract_calendar_title(row) and idx not in completed_indices:
+            return idx
+    return len(rows)
+
+
+def _build_revamais_firestore_state(next_index, rows, source, completed_indices=None):
+    total_linhas = len(rows)
+    completed_indices = completed_indices or set()
+    completed_indices = {
+        idx for idx in completed_indices
+        if 0 <= idx < total_linhas and _extract_calendar_title(rows[idx])
+    }
+    next_index = _compute_next_pending_index(rows, completed_indices)
     next_title = ""
     next_format = "Carrossel"
 
@@ -716,6 +1488,7 @@ def _build_revamais_firestore_state(next_index, rows, source):
         "last_used_index": next_index - 1,
         "next_title": next_title,
         "next_format": next_format,
+        "completed_indices": sorted(completed_indices),
         "total_rows": total_linhas,
         "state_source": source,
         "last_updated": datetime.now().isoformat(),
@@ -739,16 +1512,19 @@ def _load_revamais_calendar_state(rows):
     used_titles = legacy_state.get("used_titles", [])
     used_titles_normalized = {_normalize_calendar_title(t) for t in used_titles}
 
-    next_index = 0
+    completed_indices = set()
     for i, row in enumerate(rows):
         titulo = _extract_calendar_title(row)
-        if titulo and _normalize_calendar_title(titulo) not in used_titles_normalized:
-            next_index = i
-            break
-    else:
-        next_index = len(rows)
+        if titulo and _normalize_calendar_title(titulo) in used_titles_normalized:
+            completed_indices.add(i)
 
-    migrated_state = _build_revamais_firestore_state(next_index, rows, source="migrated_from_storage")
+    next_index = _compute_next_pending_index(rows, completed_indices)
+    migrated_state = _build_revamais_firestore_state(
+        next_index,
+        rows,
+        source="migrated_from_storage",
+        completed_indices=completed_indices,
+    )
     migrated_state["legacy_used_titles_count"] = len(used_titles)
     doc_ref.set(migrated_state)
     print(
@@ -758,26 +1534,136 @@ def _load_revamais_calendar_state(rows):
     return doc_ref, migrated_state
 
 
+def _get_calendar_row_by_index(rows, calendar_index):
+    if calendar_index is None:
+        return None
+
+    try:
+        idx = int(calendar_index)
+    except (TypeError, ValueError):
+        raise RuntimeError("calendar_index inválido.")
+
+    if idx < 0 or idx >= len(rows):
+        raise RuntimeError("calendar_index fora do calendário editorial.")
+
+    row = rows[idx]
+    if not _extract_calendar_title(row):
+        raise RuntimeError("calendar_index aponta para uma linha sem título válido.")
+
+    return idx, row
+
+
+def listar_calendario_revamais():
+    rows = _load_revamais_calendar_rows()
+    if not rows:
+        return {
+            "items": [],
+            "summary": {
+                "total": 0,
+                "done": 0,
+                "pending": 0,
+                "current_index": None,
+                "next_title": "",
+                "state_available": False,
+            },
+        }
+
+    state_available = True
+    state_data = {}
+    completed_indices = set()
+    try:
+        _doc_ref, state_data = _load_revamais_calendar_state(rows)
+        completed_indices = _coerce_completed_indices(state_data, rows)
+    except Exception as e_state:
+        print(f"⚠️ Não foi possível carregar estado do calendário Reva+: {e_state}")
+        state_available = False
+
+    current_index = _compute_next_pending_index(rows, completed_indices)
+    items = []
+
+    for idx, row in enumerate(rows):
+        titulo = _extract_calendar_title(row)
+        if not titulo:
+            continue
+
+        status = "done" if idx in completed_indices else ("current" if idx == current_index else "pending")
+        items.append({
+            "calendar_index": idx,
+            "week": row.get("Week", ""),
+            "date": row.get("Date", ""),
+            "day": row.get("Day", ""),
+            "theme": row.get("Theme", ""),
+            "format": _resolve_instagram_format(row),
+            "title": titulo,
+            "status": status,
+            "done": status == "done",
+        })
+
+    done_count = sum(1 for item in items if item["done"])
+
+    return {
+        "items": items,
+        "summary": {
+            "total": len(items),
+            "done": done_count,
+            "pending": len(items) - done_count,
+            "current_index": current_index if current_index < len(rows) else None,
+            "next_title": next(
+                (item["title"] for item in items if item["status"] == "current"),
+                "",
+            ),
+            "state_available": state_available,
+            "next_index": int((state_data or {}).get("next_index", current_index if current_index < len(rows) else len(rows))),
+        },
+    }
+
+
+def marcar_tema_revamais_concluido(calendar_index, titulo_esperado=None):
+    rows = _load_revamais_calendar_rows()
+    if not rows:
+        raise RuntimeError("Calendário editorial do Reva+ não encontrado.")
+
+    resolved = _get_calendar_row_by_index(rows, calendar_index)
+    if not resolved:
+        return None
+
+    idx, row = resolved
+    titulo = _extract_calendar_title(row)
+    if titulo_esperado and _normalize_calendar_title(titulo_esperado) != _normalize_calendar_title(titulo):
+        raise RuntimeError("O item do calendário não corresponde ao tema esperado.")
+
+    doc_ref, state_data = _load_revamais_calendar_state(rows)
+    completed_indices = _coerce_completed_indices(state_data, rows)
+    completed_indices.add(idx)
+    next_index = _compute_next_pending_index(rows, completed_indices)
+
+    updated_state = _build_revamais_firestore_state(
+        next_index,
+        rows,
+        source="firestore",
+        completed_indices=completed_indices,
+    )
+    updated_state["last_used_title"] = titulo
+    updated_state["last_used_format"] = _resolve_instagram_format(row)
+    updated_state["last_used_row_number"] = idx + 1
+    updated_state["last_used_index"] = idx
+    doc_ref.set(updated_state, merge=True)
+    return updated_state
+
+
 def obter_proximo_tema_csv(consumir=True):
     """
     Lê o calendário editorial e usa um ponteiro remoto no Firestore
     para persistir o próximo item da agenda do Reva+.
     """
-    csv_filename = "calendario_editorial_150_semanas.csv"
-    csv_path = os.path.join(os.path.dirname(__file__), csv_filename)
-
-    if not os.path.exists(csv_path):
-        print(f"⚠️ Arquivo {csv_filename} não encontrado.")
+    rows = _load_revamais_calendar_rows()
+    if not rows:
         return None
-
-    rows = []
-    with open(csv_path, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
 
     total_linhas = len(rows)
     doc_ref, state_data = _load_revamais_calendar_state(rows)
-    next_index = int(state_data.get("next_index", 0) or 0)
+    completed_indices = _coerce_completed_indices(state_data, rows)
+    next_index = _compute_next_pending_index(rows, completed_indices)
 
     tema_escolhido = None
     formato_escolhido = "Carrossel"
@@ -798,10 +1684,17 @@ def obter_proximo_tema_csv(consumir=True):
     print(f"📅 Tema do Calendário Selecionado: {tema_escolhido} (Item {idx_atual + 1}/{total_linhas})")
 
     if consumir:
-        updated_state = _build_revamais_firestore_state(idx_atual + 1, rows, source="firestore")
+        completed_indices.add(idx_atual)
+        updated_state = _build_revamais_firestore_state(
+            idx_atual + 1,
+            rows,
+            source="firestore",
+            completed_indices=completed_indices,
+        )
         updated_state["last_used_title"] = tema_escolhido
         updated_state["last_used_format"] = formato_escolhido
         updated_state["last_used_row_number"] = idx_atual + 1
+        updated_state["last_used_index"] = idx_atual
 
         try:
             doc_ref.set(updated_state, merge=True)
@@ -817,16 +1710,37 @@ def obter_proximo_tema_csv(consumir=True):
     return {
         "tema": tema_escolhido,
         "formato": formato_escolhido,
+        "calendar_index": idx_atual,
+        "week": rows[idx_atual].get("Week", ""),
+        "date": rows[idx_atual].get("Date", ""),
+        "day": rows[idx_atual].get("Day", ""),
+        "theme": rows[idx_atual].get("Theme", ""),
     }
 
 
-def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True):
+def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True, calendar_index=None):
     """
     Resolve o tema efetivo do Reva+ e o formato padrão do Instagram.
     """
-    is_calendar_source = not tema_usuario or tema_usuario.strip() == ""
+    is_calendar_source = calendar_index is not None or not tema_usuario or tema_usuario.strip() == ""
     formato_instagram = "Carrossel"
     tema = tema_usuario
+    resolved_calendar_index = None
+
+    if calendar_index is not None:
+        rows = _load_revamais_calendar_rows()
+        resolved = _get_calendar_row_by_index(rows, calendar_index)
+        if not resolved:
+            return None
+        resolved_calendar_index, row = resolved
+        tema = _extract_calendar_title(row)
+        formato_instagram = _resolve_instagram_format(row)
+        return {
+            "tema": tema,
+            "formato_instagram": formato_instagram,
+            "is_calendar_source": True,
+            "calendar_index": resolved_calendar_index,
+        }
 
     if not tema or tema == "auto":
         dados_csv = obter_proximo_tema_csv(consumir=consumir_tema_auto)
@@ -834,35 +1748,108 @@ def resolver_tema_revamais(tema_usuario=None, consumir_tema_auto=True):
             return None
         tema = dados_csv["tema"]
         formato_instagram = _resolve_instagram_format(dados_csv)
+        resolved_calendar_index = dados_csv.get("calendar_index")
 
     return {
         "tema": tema,
         "formato_instagram": formato_instagram,
         "is_calendar_source": is_calendar_source,
+        "calendar_index": resolved_calendar_index,
     }
 
 
-def preparar_referencias_revamais(tema_usuario=None, quantidade_referencias=8):
+def _resolver_tema_com_referencias(
+    tema_usuario=None,
+    quantidade_referencias=8,
+    consumir_tema_auto=False,
+    calendar_index=None,
+    log_callback=None,
+):
+    """
+    Resolve um tema e busca referências. Em modo automático:
+    - na preparação (consumir=False), não consome o tema válido, mas pula
+      permanentemente os temas sem evidência para evitar travamento da agenda;
+    - na geração final (consumir=True), consome e continua avançando até achar
+      um tema com referências.
+    """
+    max_tentativas = 299
+
+    for tentativa in range(max_tentativas):
+        dados_tema = resolver_tema_revamais(
+            tema_usuario=tema_usuario,
+            consumir_tema_auto=consumir_tema_auto,
+            calendar_index=calendar_index,
+        )
+        if not dados_tema:
+            return None
+
+        tema = dados_tema["tema"]
+        tema_ingles = gerar_query_pubmed_tema(tema)
+        referencias = buscar_referencias_pubmed(tema_ingles, limite_retorno=quantidade_referencias)
+
+        if referencias:
+            return {
+                "dados_tema": dados_tema,
+                "tema_ingles": tema_ingles,
+                "referencias": referencias,
+            }
+
+        if calendar_index is not None or (tema_usuario and tema_usuario.strip()):
+            return {
+                "dados_tema": dados_tema,
+                "tema_ingles": tema_ingles,
+                "referencias": [],
+            }
+
+        if log_callback:
+            log_callback(
+                f"⚠️ Tema sem evidências suficientes, pulando para o próximo da agenda: {tema}"
+            )
+
+        if not consumir_tema_auto:
+            obter_proximo_tema_csv(consumir=True)
+
+    return None
+
+
+def preparar_referencias_revamais(tema_usuario=None, quantidade_referencias=8, calendar_index=None):
     """
     Etapa intermediária do pipeline: resolve o tema e retorna artigos candidatos
     para seleção manual antes da geração do boletim.
     """
-    dados_tema = resolver_tema_revamais(
+    resultado_busca = _resolver_tema_com_referencias(
         tema_usuario=tema_usuario,
+        quantidade_referencias=quantidade_referencias,
         consumir_tema_auto=False,
+        calendar_index=calendar_index,
     )
-    if not dados_tema:
+    if not resultado_busca:
         return {"status": "error", "message": "Nenhum tema disponível para preparar referências."}
 
+    dados_tema = resultado_busca["dados_tema"]
     tema = dados_tema["tema"]
-    tema_ingles = gerar_query_pubmed_tema(tema)
-    referencias = buscar_referencias_pubmed(tema_ingles, limite_retorno=quantidade_referencias)
+    tema_ingles = resultado_busca["tema_ingles"]
+    referencias = resultado_busca["referencias"]
+
+    if not referencias:
+        return {
+            "status": "error",
+            "message": f"Nenhuma evidência encontrada para o tema '{tema}'.",
+            "tema": tema,
+            "tema_ingles": tema_ingles,
+            "instagram_format": dados_tema["formato_instagram"],
+            "calendar_index": dados_tema.get("calendar_index"),
+            "referencias_sugeridas": [],
+            "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
+            "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+        }
 
     return {
         "status": "success",
         "tema": tema,
         "tema_ingles": tema_ingles,
         "instagram_format": dados_tema["formato_instagram"],
+        "calendar_index": dados_tema.get("calendar_index"),
         "referencias_sugeridas": referencias,
         "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
         "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
@@ -912,12 +1899,20 @@ def aplicar_logo_overlay(local_filename, slide_num):
         import traceback
         traceback.print_exc()
 
-def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None):
+def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None, log_callback=None):
     """
     Gera conteúdo para Instagram (Reel ou Carrossel).
     Melhoria v2: Gera texto com LLM, Imagem Clean com IA, e Texto via Overlay (Pillow).
     """
-    print(f"📸 Gerando conteúdo para Instagram ({formato})...")
+    def emit_log(message):
+        print(message)
+        if log_callback:
+            try:
+                log_callback(message)
+            except Exception:
+                pass
+
+    emit_log(f"📸 Gerando conteúdo para Instagram ({formato})...")
     assets = []
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     
@@ -939,7 +1934,7 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             assets.append({"type": "roteiro", "url": url, "name": "Roteiro do Reel"})
             
         elif formato.lower() == "carrossel":
-            print("   📝 Planejando narrativa do carrossel...")
+            emit_log("   📝 Planejando narrativa do carrossel...")
             
             contexto_extra = f"\nBASEIE-SE ESTRITAMENTE NESTE CONTEÚDO JÁ GERADO:\n{conteudo_base}\n" if conteudo_base else ""
             
@@ -970,12 +1965,14 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             RULES FOR 'image_prompt_english':
 1. **Visual Style**: Realistic, high-quality, editorial medical photography aesthetic. Prefer photorealistic images over illustrations. Use natural lighting, clean composition, and a professional healthcare look.
 2. **People**: Whenever appropriate, include real-looking people in the scene, especially patients, physiotherapists, or adults in everyday health-related situations. Human presence should feel natural and credible, not artificial or cartoonish.
-3. **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific '{titulo}' and '{texto_curto}' of the slide.
+3. **Correction**: Do NOT include the general theme title "{tema}" in the image. ONLY include the specific '{{titulo}}' and '{{texto_curto}}' of the slide.
 4. **Density**: Avoid clutter. Use ONE main scene or focal subject that clearly supports the message of the slide.
-5. **Text Instruction**: Explicitly state: "Include the text: '{titulo}' and '{texto_curto}' in the image. Typography must be legible, modern, sans-serif."
+5. **Text Instruction**: If visible text is used, explicitly state: "Include only the exact Portuguese text: '{{titulo}}' and '{{texto_curto}}'." Typography must be legible, modern, sans-serif.
 6. **Consistency**: Keep a clean healthcare brand aesthetic, with soft and trustworthy tones, subtle teal accents when appropriate, and premium visual quality.
 7. **No Hallucinations**: Do not ask for logos, watermarks, icons, or cartoon elements unless strictly necessary for the concept.
 8. **Avoid Illustration Look**: Do not generate flat drawings, vector art, line art, infographic-style icons, or cartoon-style medical scenes unless the slide specifically requires a scientific mechanism that cannot be represented with realistic photography.
+9. **Language Policy**: Any visible text inside the image must be exclusively in Brazilian Portuguese (PT-BR). Never use English, mixed language, bilingual labels, or untranslated headings.
+10. **Fallback Rule**: If there is any risk of wrong language, instruct the image model to use no visible text.
 
 SLIDE STRUCTURE:
 - Slide 1: Hook/Pain (Realistic scene showing the symptom or limitation in daily life).
@@ -991,7 +1988,29 @@ SLIDE STRUCTURE:
             except:
                 slides_data = [{"slide": i+1, "titulo": f"Slide {i+1}", "texto_curto": tema, "image_prompt_english": f"Slide about {tema}"} for i in range(7)]
 
-            print(f"   🖼️ Gerando 7 slides (Prompt Dinâmico por Slide)...")
+            try:
+                roteiro_carrossel_nome = f"roteiro_carrossel_{timestamp}.md"
+                linhas_roteiro = [f"# Roteiro de Carrossel - {tema}", ""]
+                for slide in slides_data:
+                    slide_num = slide.get("slide", "")
+                    slide_titulo = slide.get("titulo", "")
+                    slide_texto = slide.get("texto_curto", "")
+                    linhas_roteiro.append(f"## Slide {slide_num}: {slide_titulo}".strip())
+                    if slide_texto:
+                        linhas_roteiro.append(slide_texto)
+                    linhas_roteiro.append("")
+
+                with open(roteiro_carrossel_nome, "w", encoding="utf-8") as f:
+                    f.write("\n".join(linhas_roteiro).strip() + "\n")
+
+                roteiro_carrossel_url = upload_file(roteiro_carrossel_nome, f"instagram/{roteiro_carrossel_nome}")
+                if os.path.exists(roteiro_carrossel_nome):
+                    os.remove(roteiro_carrossel_nome)
+                assets.append({"type": "roteiro", "url": roteiro_carrossel_url, "name": "Roteiro do Carrossel"})
+            except Exception as e:
+                emit_log(f"⚠️ Erro ao salvar roteiro do carrossel: {e}")
+
+            emit_log(f"   🖼️ Gerando {len(slides_data)} slides (Prompt Dinâmico por Slide)...")
             files_to_zip = []
             
             # URL da Logo (Hardcoded para teste ou parametrizável)
@@ -1017,6 +2036,8 @@ SLIDE STRUCTURE:
                 full_prompt = (
                     f"{slide_visual_prompt} "
                     f"Style: Clean, Minimalist, High Contrast. Format: SQUARE (1:1). "
+                    "Any visible text must be exclusively in Brazilian Portuguese (PT-BR). "
+                    "Never use English or mixed language. If unsure, use no text. "
                     f"NO CLUTTER. Focus on the central message."
                 )
 
@@ -1024,7 +2045,14 @@ SLIDE STRUCTURE:
                 local_base_name = f"slide_{slide_num}_{timestamp}"
                 local_filename = f"{local_base_name}.png"
                 
-                gerar_imagem(full_prompt, local_base_name, keep_local=True, forced_filename=local_filename)
+                emit_log(f"   🎞️ Slide {slide_num}/{len(slides_data)}: gerando arte...")
+                gerar_imagem(
+                    full_prompt,
+                    local_base_name,
+                    keep_local=True,
+                    forced_filename=local_filename,
+                    log_callback=log_callback,
+                )
                 
                 try:
                     aplicar_logo_overlay(local_filename, slide_num) 
@@ -1046,7 +2074,7 @@ SLIDE STRUCTURE:
             try:
                 import zipfile
                 zip_name = f"instagram_carrossel_{timestamp}.zip"
-                print(f"   📦 Criando ZIP: {zip_name}...")
+                emit_log(f"   📦 Criando ZIP: {zip_name}...")
                 
                 with zipfile.ZipFile(zip_name, 'w') as zf:
                     for f in files_to_zip:
@@ -1061,10 +2089,10 @@ SLIDE STRUCTURE:
                 assets.append({"type": "zip", "url": zip_url, "name": "Baixar Todas as Imagens (.zip)"})
                 
             except Exception as e:
-                print(f"⚠️ Erro ao criar ZIP: {e}")
+                emit_log(f"⚠️ Erro ao criar ZIP: {e}")
                 
     except Exception as e:
-        print(f"❌ Erro ao gerar conteúdo Instagram: {e}")
+        emit_log(f"❌ Erro ao gerar conteúdo Instagram: {e}")
         assets.append({"type": "error", "content": str(e)})
         
     return assets
@@ -1075,6 +2103,8 @@ def criar_campanha_revamais(
     gerar_instagram=True,
     enviar_email=True,
     referencias_selecionadas=None,
+    relatorio_consensus=None,
+    calendar_index=None,
     log_callback=None,
     check_cancel=None,
 ):
@@ -1094,7 +2124,27 @@ def criar_campanha_revamais(
     log("🚀 Iniciando pipeline do Reva +...")
 
     check()
-    dados_tema = resolver_tema_revamais(tema_usuario=tema_usuario, consumir_tema_auto=True)
+    resultado_busca = None
+    if referencias_selecionadas:
+        dados_tema = resolver_tema_revamais(
+            tema_usuario=tema_usuario,
+            consumir_tema_auto=(calendar_index is None),
+            calendar_index=calendar_index,
+        )
+        if not dados_tema:
+            return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
+    else:
+        resultado_busca = _resolver_tema_com_referencias(
+            tema_usuario=tema_usuario,
+            quantidade_referencias=8,
+            consumir_tema_auto=(calendar_index is None),
+            calendar_index=calendar_index,
+            log_callback=log,
+        )
+        if not resultado_busca:
+            return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
+        dados_tema = resultado_busca["dados_tema"]
+
     if not dados_tema:
         return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
 
@@ -1106,6 +2156,13 @@ def criar_campanha_revamais(
     log(f"🚀 Iniciando Reva +: {tema} (Insta: {formato_instagram})")
     
     referencias_selecionadas = referencias_selecionadas or []
+    relatorio_consensus = _normalizar_relatorio_consensus(relatorio_consensus)
+    if _is_generic_consensus_theme(tema) and relatorio_consensus:
+        tema_inferido = _infer_tema_from_consensus_report(relatorio_consensus)
+        if tema_inferido:
+            tema = tema_inferido
+            dados_tema["tema"] = tema
+            log(f"🧭 Tema clínico inferido do relatório: {tema}")
     tema_ingles = tema
     referencias = []
 
@@ -1114,20 +2171,20 @@ def criar_campanha_revamais(
         referencias = referencias_selecionadas
     else:
         check()
-        # 1. Traduzir tema para keywords científicas
         log("🌍 Traduzindo tema para keywords científicas...")
-        tema_ingles = gerar_query_pubmed_tema(tema)
-
+        tema_ingles = resultado_busca["tema_ingles"]
         check()
-        # 2. Buscar Referências
         log(f"🔎 Buscando referências para: {tema_ingles}...")
-        referencias = buscar_referencias_pubmed(tema_ingles)
+        referencias = resultado_busca["referencias"]
 
     if not referencias:
         return {
             "status": "error",
             "message": "Nenhuma referência válida foi encontrada ou selecionada para gerar o Reva+."
         }
+
+    if relatorio_consensus:
+        log("📘 Usando o relatório do Consensus como contexto principal do conteúdo.")
     
     check()
     # 3. Preparar placeholders de imagem
@@ -1135,72 +2192,126 @@ def criar_campanha_revamais(
     url_ilustrativa = "https://placehold.co/600x400?text=Imagem+Ilustrativa" # Placeholder default
     url_corpo_ciencia = "https://placehold.co/600x400?text=Infografico+Ciencia" # Placeholder default
     url_corpo_dicas = "https://placehold.co/600x400?text=Infografico+Dicas" # Placeholder default
+    legenda_corpo_ciencia = ""
+    legenda_corpo_dicas = ""
 
     check()
     # 4. Gerar Texto
     log("✍️ Escrevendo boletim e formatando HTML...")
-    html_texto = gerar_conteudo_revamais(tema, referencias)
+    html_texto = gerar_conteudo_revamais(
+        tema,
+        referencias,
+        relatorio_consensus=relatorio_consensus,
+    )
 
     check()
     # 5. Gerar Imagens a partir do conteúdo final
     if gerar_midia:
         log("🧭 Derivando prompts visuais do conteúdo final...")
         briefs_visuais = gerar_briefs_visuais_revamais(tema, html_texto, referencias)
+        legenda_corpo_ciencia = str(briefs_visuais.get("ciencia", {}).get("caption_ptbr") or "").strip()
+        legenda_corpo_dicas = str(briefs_visuais.get("dicas", {}).get("caption_ptbr") or "").strip()
 
         log("🎨 Gerando assets visuais (isso pode demorar)...")
+        log(f"🖼️ Modelo principal de imagem: {OPENAI_IMAGE_MODEL} (fallback: {GEMINI_IMAGE_MODEL})")
         try:
              # 1. Imagem Ilustrativa (Lifestyle/Visual)
-            prompt_ilustrativa = f"A high quality, photorealistic or cinematic style photo-illustration about '{tema_ingles}'. Showing people, lifestyle, or the subject in a natural, positive way. NO TEXT. Suitable for a newsletter cover."
-            url_ilustrativa = gerar_imagem(prompt_ilustrativa, "ilustrativa")
+            prompt_ilustrativa = briefs_visuais["abertura"]["prompt_english"]
+            log("   1/3 Gerando imagem de capa/abertura...")
+            url_ilustrativa = gerar_imagem(
+                prompt_ilustrativa,
+                "ilustrativa",
+                log_callback=log,
+                image_size="1792x1024",
+                target_aspect_ratio=(16, 9),
+            )
 
             # 2. Imagem Corpo (Infográfico/Educativo) - Ciência/Mecanismo
             prompt_corpo_ciencia = briefs_visuais["ciencia"]["prompt_english"]
-            url_corpo_ciencia = gerar_imagem(prompt_corpo_ciencia, "corpo_ciencia")
+            log("   2/3 Gerando imagem científica...")
+            url_corpo_ciencia = gerar_imagem(prompt_corpo_ciencia, "corpo_ciencia", log_callback=log)
 
             # 3. Imagem Corpo (Infográfico/Educativo) - Dicas Práticas
             prompt_corpo_dicas = briefs_visuais["dicas"]["prompt_english"]
-            url_corpo_dicas = gerar_imagem(prompt_corpo_dicas, "corpo_dicas")
+            log("   3/3 Gerando imagem de dicas práticas...")
+            url_corpo_dicas = gerar_imagem(prompt_corpo_dicas, "corpo_dicas", log_callback=log)
         except Exception as e:
             log(f"⚠️ Erro ao gerar imagens: {e}")
     else:
         log("⏩ Pulando geração de imagens (opção desmarcada).")
 
-    def inserir_imagem_educativa(html, img_url, h2_regex, fallback="first_h2"):
-        """Insere a imagem educativa após um H2 alvo, com fallback controlado."""
-        img_tag = f'\n<img src="{img_url}" class="body-img" alt="Infográfico">\n'
-        import re
-        pattern = re.compile(rf'(<h2[^>]*>\\s*{h2_regex}\\s*</h2>)', re.IGNORECASE)
-        match = pattern.search(html)
+    if not legenda_corpo_ciencia:
+        legenda_corpo_ciencia = resumir_texto_para_legenda(
+            extrair_secao_html(html_texto, r"O\s+que\s+a\s+Ci[eê]ncia\s+Comprova\??"),
+            max_chars=220,
+        )
+    if not legenda_corpo_dicas:
+        legenda_corpo_dicas = resumir_texto_para_legenda(
+            extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas"),
+            max_chars=220,
+        )
+
+    def montar_bloco_imagem(img_url, alt, caption=None):
+        caption = str(caption or "").strip()
+        caption_html = (
+            f'\n<div class="image-caption" style="margin-top:10px;font-size:13px;line-height:1.5;color:#5b6470;text-align:center;">{html.escape(caption)}</div>\n'
+            if caption
+            else ""
+        )
+        return (
+            '\n<div class="image-block" style="margin:20px 0;">'
+            f'\n<img src="{html.escape(str(img_url or ""), quote=True)}" class="body-img" alt="{html.escape(str(alt or ""), quote=True)}" '
+            'style="width:100%;margin:0;border-radius:8px;display:block;">'
+            f"{caption_html}</div>\n"
+        )
+
+    def inserir_imagem_abertura(html_conteudo, img_url):
+        """Insere a imagem de abertura logo após o primeiro H1."""
+        bloco = montar_bloco_imagem(img_url, "Imagem de abertura do boletim")
+        pattern = re.compile(r"(<h1[^>]*>.*?</h1>)", re.IGNORECASE | re.DOTALL)
+        match = pattern.search(html_conteudo)
         if match:
             pos = match.end()
-            return html[:pos] + img_tag + html[pos:]
+            return html_conteudo[:pos] + bloco + html_conteudo[pos:]
+        return bloco + html_conteudo
+
+    def inserir_imagem_educativa(html_conteudo, img_url, caption, h2_regex, fallback="first_h2"):
+        """Insere a imagem educativa após um H2 alvo, com fallback controlado."""
+        bloco = montar_bloco_imagem(img_url, "Infográfico educativo", caption=caption)
+        pattern = re.compile(rf'(<h2[^>]*>\\s*{h2_regex}\\s*</h2>)', re.IGNORECASE)
+        match = pattern.search(html_conteudo)
+        if match:
+            pos = match.end()
+            return html_conteudo[:pos] + bloco + html_conteudo[pos:]
 
         pattern_h2 = re.compile(r'(<h2[^>]*>.*?</h2>)', re.IGNORECASE | re.DOTALL)
-        matches = list(pattern_h2.finditer(html))
+        matches = list(pattern_h2.finditer(html_conteudo))
         if matches:
             if fallback == "last_h2":
                 pos = matches[-1].end()
-                return html[:pos] + img_tag + html[pos:]
+                return html_conteudo[:pos] + bloco + html_conteudo[pos:]
             # default: first_h2
             pos = matches[0].end()
-            return html[:pos] + img_tag + html[pos:]
+            return html_conteudo[:pos] + bloco + html_conteudo[pos:]
 
         # Último recurso: adiciona ao final do conteúdo
-        return html + img_tag
+        return html_conteudo + bloco
 
-    # Insere as duas imagens educativas dentro do texto
-    html_texto = inserir_imagem_educativa(
+    html_texto_site = inserir_imagem_educativa(
         html_texto,
         url_corpo_ciencia,
+        legenda_corpo_ciencia,
         r"O\\s+que\\s+a\\s+Ci[eê]ncia\\s+Comprova\\??",
         fallback="first_h2",
     )
-    html_texto = inserir_imagem_educativa(
-        html_texto,
+    html_texto_site = inserir_imagem_educativa(
+        html_texto_site,
         url_corpo_dicas,
+        legenda_corpo_dicas,
         r"Dicas\\s+Pr[aá]ticas",
         fallback="last_h2",
     )
+    html_texto_email = inserir_imagem_abertura(html_texto_site, url_ilustrativa)
 
     check()
     # 5.5 Gerar Conteúdo Instagram (Extra)
@@ -1210,7 +2321,13 @@ def criar_campanha_revamais(
         try:
             # Extrai texto das referências para passar de contexto
             refs_text_context = "\n".join([r['texto'] for r in referencias])
-            instagram_assets = gerar_conteudo_instagram(tema, formato_instagram, refs_text_context, conteudo_base=html_texto)
+            instagram_assets = gerar_conteudo_instagram(
+                tema,
+                formato_instagram,
+                refs_text_context,
+                conteudo_base=html_texto_email,
+                log_callback=log,
+            )
         except Exception as e:
              log(f"⚠️ Erro ao gerar Instagram: {e}")
     else:
@@ -1282,10 +2399,7 @@ def criar_campanha_revamais(
             </div>
             
             <div style="padding: 20px;">
-                <!-- Imagem Ilustrativa (Nova) -->
-                <img src="{url_ilustrativa}" class="body-img" alt="Ilustração do Título">
-                
-                {html_texto}
+                {html_texto_email}
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
@@ -1296,7 +2410,7 @@ def criar_campanha_revamais(
                 <div class="references">
                     <h4>📚 Referências Científicas Utilizadas:</h4>
                     <ul>
-                    {''.join([f"<li>{r['texto']} <a href='{r['link']}' target='_blank'>[PubMed]</a></li>" for r in referencias]) if referencias else "<li>Referências não disponíveis neste momento.</li>"}
+                    {render_referencias_html_items(referencias)}
                     </ul>
                 </div>
             </div>
@@ -1350,7 +2464,6 @@ def criar_campanha_revamais(
     # 9. Integração WhatsApp (Novo)
     try:
         from whatsapp_service import create_draft
-        import re
         
         def slugify(text):
             text = text.lower().strip()
@@ -1388,14 +2501,7 @@ def criar_campanha_revamais(
     url_corpo = url_corpo_ciencia
 
     # Conteúdo para site: garante bloco final de referências (sem alterar html_full do Mailchimp).
-    refs_items_site = (
-        "".join([
-            f"<li>{r['texto']} <a href='{r['link']}' target='_blank'>[PubMed]</a></li>"
-            for r in referencias
-        ])
-        if referencias
-        else "<li>Referências não disponíveis neste momento.</li>"
-    )
+    refs_items_site = render_referencias_html_items(referencias)
 
     bloco_referencias_site = f"""
     <div class="references" style="margin-top:30px;padding-top:20px;border-top:1px solid #eee;">
@@ -1406,18 +2512,33 @@ def criar_campanha_revamais(
     </div>
     """
 
-    html_content_site = html_texto
-    html_lower = html_texto.lower()
+    html_content_site = html_texto_site
+    html_lower = html_texto_site.lower()
     if "referências científicas utilizadas" not in html_lower and "referencias cientificas utilizadas" not in html_lower:
-        html_content_site = html_texto + bloco_referencias_site
+        html_content_site = html_texto_site + bloco_referencias_site
+
+    if dados_tema.get("calendar_index") is not None:
+        try:
+            marcar_tema_revamais_concluido(
+                dados_tema.get("calendar_index"),
+                titulo_esperado=tema,
+            )
+            log("✅ Item do calendário Reva+ marcado como concluído.")
+        except Exception as e_calendar:
+            log(f"⚠️ Não foi possível marcar o item do calendário como concluído: {e_calendar}")
 
     return {
         "status": "success", 
         "campaign_id": campaign['id'], 
         "tema": tema,
+        "calendar_index": dados_tema.get("calendar_index"),
         "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
         "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
+        "modelo_imagem_preferencial": OPENAI_IMAGE_MODEL,
+        "modelo_imagem_fallback": GEMINI_IMAGE_MODEL,
         "tema_query_pubmed": tema_ingles,
+        "fonte_contexto_principal": "Consensus" if relatorio_consensus else "PubMed",
+        "relatorio_consensus_usado": bool(relatorio_consensus),
         "referencias_utilizadas": referencias,
         "url_capa": url_capa_estatica,
         "url_ilustrativa": url_ilustrativa,

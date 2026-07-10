@@ -2,6 +2,7 @@
 from fastapi import FastAPI, BackgroundTasks, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+import base64
 import json
 import uuid
 
@@ -38,6 +39,12 @@ class ReferenciaSelecionadaInput(BaseModel):
     resumo: str = ""
     jif: float = 0.0
     journal: str = ""
+    fonte: str = ""
+    source_label: str = ""
+    doi: str = ""
+    tipo_estudo: str = ""
+    achado_principal: str = ""
+    consensus_claim: str = ""
 
 class NewsPayload(BaseModel):
     titulo: str
@@ -48,7 +55,7 @@ class NewsPayload(BaseModel):
     autor: str = "Revalidatie"
 
 # Force rebuild for Python 3.11
-app = FastAPI(title="RevaCast Boletim Service")
+app = FastAPI(title="Revahub")
 
 # Configuração de CORS Permissiva (Resolve problemas com WebContainers e Ambientes de Dev)
 app.add_middleware(
@@ -176,10 +183,12 @@ def processar_revamais_background(task_id: str, opcoes: dict):
         # Chama o serviço com as opções desempacotadas
         resultado = criar_campanha_revamais(
             tema_usuario=tema,
+            calendar_index=opcoes.get("calendar_index"),
             gerar_midia=opcoes.get("gerar_midia", True),
             gerar_instagram=opcoes.get("gerar_instagram", True),
             enviar_email=opcoes.get("enviar_email", True),
             referencias_selecionadas=opcoes.get("referencias_selecionadas", []),
+            relatorio_consensus=opcoes.get("relatorio_consensus", ""),
             log_callback=log_callback,
             check_cancel=check_cancel
         )
@@ -214,6 +223,33 @@ def processar_revamais_background(task_id: str, opcoes: dict):
         save_task(task_id, task_state)
 
 
+def ensure_storage_ready():
+    if firebase_admin._apps:
+        return
+
+    cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON", "firebase_credentials.json")
+    if os.path.exists(cred_path):
+        cred = credentials.Certificate(cred_path)
+        firebase_admin.initialize_app(cred, {
+            'storageBucket': os.environ.get("FIREBASE_BUCKET_NAME")
+        })
+
+
+def serialize_storage_blob(blob, tipo):
+    try:
+        blob.make_public()
+    except Exception:
+        pass
+
+    return {
+        "tipo": tipo,
+        "nome": blob.name.split("/")[-1],
+        "url": blob.public_url,
+        "data": blob.time_created.isoformat() if getattr(blob, "time_created", None) else "",
+        "tamanho": f"{blob.size / 1024 / 1024:.2f} MB" if getattr(blob, "size", None) else "",
+    }
+
+
 @app.post("/cancelar-boletim/{task_id}")
 def cancelar_boletim(task_id: str):
     task = load_task(task_id)
@@ -242,14 +278,7 @@ def trigger_feed_update():
 def listar_episodios():
     """Lista os últimos 5 episódios do Firebase com link de download."""
     try:
-        # Garante inicialização (caso não tenha rodado via boletim_service)
-        if not firebase_admin._apps:
-            cred_path = os.environ.get("FIREBASE_CREDENTIALS_JSON", "firebase_credentials.json")
-            if os.path.exists(cred_path):
-                cred = credentials.Certificate(cred_path)
-                firebase_admin.initialize_app(cred, {
-                    'storageBucket': os.environ.get("FIREBASE_BUCKET_NAME")
-                })
+        ensure_storage_ready()
         
         bucket = storage.bucket()
         # Debug: Listar tudo para ver se o prefixo está certo
@@ -278,6 +307,39 @@ def listar_episodios():
     except Exception as e:
         return {"error": str(e)}
 
+
+@app.get("/listar-instagram-revamais")
+def listar_instagram_revamais():
+    """Lista os últimos reels, roteiros e carrosséis gerados no Reva+."""
+    try:
+        ensure_storage_ready()
+
+        bucket = storage.bucket()
+        reels = []
+        roteiros = []
+        carrosseis = []
+
+        for blob in bucket.list_blobs(prefix="instagram/"):
+            nome = blob.name.split("/")[-1]
+            if nome.startswith("instagram_reel_") and nome.endswith(".md"):
+                reels.append(serialize_storage_blob(blob, "reel"))
+            elif nome.startswith("roteiro_carrossel_") and nome.endswith(".md"):
+                roteiros.append(serialize_storage_blob(blob, "roteiro"))
+            elif nome.startswith("instagram_carrossel_") and nome.endswith(".zip"):
+                carrosseis.append(serialize_storage_blob(blob, "carrossel"))
+
+        reels.sort(key=lambda item: item["data"], reverse=True)
+        roteiros.sort(key=lambda item: item["data"], reverse=True)
+        carrosseis.sort(key=lambda item: item["data"], reverse=True)
+
+        return {
+            "reels": reels[:5],
+            "roteiros": roteiros[:5],
+            "carrosseis": carrosseis[:5],
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 @app.get("/")
 def root():
     return {"message": "Serviço do boletim científico está no ar. Acesse /painel para interface gráfica."}
@@ -285,6 +347,16 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "ok", "python_version": "unknown"}
+
+
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"])
+def favicon():
+    return Response(status_code=204)
+
+
+@app.api_route("/.well-known/appspecific/com.chrome.devtools.json", methods=["GET", "HEAD"])
+def chrome_devtools_metadata():
+    return JSONResponse(content={})
 
 @app.get("/painel", response_class=HTMLResponse)
 def painel():
@@ -369,15 +441,33 @@ def iniciar_boletim(
 
 class RevaMaisInput(BaseModel):
     tema: str = ""
+    calendar_index: int | None = None
     gerar_midia: bool = True
     gerar_instagram: bool = True
     enviar_email: bool = True
     referencias_selecionadas: list[ReferenciaSelecionadaInput] = Field(default_factory=list)
+    relatorio_consensus: str = ""
 
 
 class RevaMaisPrepareInput(BaseModel):
     tema: str = ""
+    calendar_index: int | None = None
     quantidade_referencias: int = 8
+
+
+class RevaMaisConsensusInput(BaseModel):
+    tema: str = ""
+    calendar_index: int | None = None
+    relatorio: str
+    quantidade_referencias: int | None = None
+
+
+class RevaMaisConsensusPdfInput(BaseModel):
+    tema: str = ""
+    calendar_index: int | None = None
+    filename: str = "consensus.pdf"
+    pdf_base64: str
+    quantidade_referencias: int | None = None
 
 @app.post("/iniciar-revamais")
 def iniciar_revamais(
@@ -393,10 +483,12 @@ def iniciar_revamais(
         # Prepara opções
         opcoes = {
             "tema_usuario": input_data.tema,
+            "calendar_index": input_data.calendar_index,
             "gerar_midia": input_data.gerar_midia,
             "gerar_instagram": input_data.gerar_instagram,
             "enviar_email": input_data.enviar_email,
             "referencias_selecionadas": [model_to_dict(ref) for ref in input_data.referencias_selecionadas],
+            "relatorio_consensus": input_data.relatorio_consensus,
         }
         
         background_tasks.add_task(processar_revamais_background, task_id, opcoes)
@@ -424,6 +516,20 @@ def cancelar_tarefa_generica(task_id: str):
     return cancelar_boletim(task_id) # Reutiliza a mesma lógica
 
 
+@app.get("/calendario-revamais")
+def calendario_revamais_endpoint():
+    try:
+        from revamais_service import listar_calendario_revamais
+
+        resultado = listar_calendario_revamais()
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
+
+
 @app.post("/preparar-revamais")
 def preparar_revamais_endpoint(input_data: RevaMaisPrepareInput):
     """
@@ -435,8 +541,68 @@ def preparar_revamais_endpoint(input_data: RevaMaisPrepareInput):
 
         resultado = preparar_referencias_revamais(
             tema_usuario=input_data.tema,
+            calendar_index=input_data.calendar_index,
             quantidade_referencias=input_data.quantidade_referencias,
         )
+
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
+
+
+@app.post("/importar-consensus-revamais")
+def importar_consensus_revamais_endpoint(input_data: RevaMaisConsensusInput):
+    """
+    Importa um relatório colado/exportado do Consensus.app e retorna referências
+    no mesmo formato usado pela curadoria manual do Reva+.
+    """
+    try:
+        from revamais_service import preparar_referencias_consensus_revamais
+
+        resultado = preparar_referencias_consensus_revamais(
+            tema_usuario=input_data.tema,
+            calendar_index=input_data.calendar_index,
+            relatorio_texto=input_data.relatorio,
+            quantidade_referencias=input_data.quantidade_referencias,
+        )
+
+        return JSONResponse(content={"success": True, "resultado": resultado})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "erro": str(e)},
+        )
+
+
+@app.post("/importar-consensus-revamais-pdf")
+def importar_consensus_revamais_pdf_endpoint(input_data: RevaMaisConsensusPdfInput):
+    """
+    Recebe um PDF do Consensus em base64, extrai o texto e devolve o mesmo
+    payload usado pela curadoria do Reva+.
+    """
+    try:
+        from revamais_service import (
+            extrair_texto_pdf_consensus,
+            preparar_referencias_consensus_revamais,
+        )
+
+        pdf_base64 = input_data.pdf_base64.strip()
+        if "," in pdf_base64:
+            pdf_base64 = pdf_base64.split(",", 1)[1]
+
+        pdf_bytes = base64.b64decode(pdf_base64)
+        relatorio_texto = extrair_texto_pdf_consensus(pdf_bytes)
+
+        resultado = preparar_referencias_consensus_revamais(
+            tema_usuario=input_data.tema,
+            calendar_index=input_data.calendar_index,
+            relatorio_texto=relatorio_texto,
+            quantidade_referencias=input_data.quantidade_referencias,
+        )
+        resultado["arquivo_importado"] = input_data.filename
 
         return JSONResponse(content={"success": True, "resultado": resultado})
     except Exception as e:
@@ -557,10 +723,12 @@ def criar_revamais_endpoint(input_data: RevaMaisInput):
         from revamais_service import criar_campanha_revamais
         resultado = criar_campanha_revamais(
             tema_usuario=input_data.tema,
+            calendar_index=input_data.calendar_index,
             gerar_midia=input_data.gerar_midia,
             gerar_instagram=input_data.gerar_instagram,
             enviar_email=input_data.enviar_email,
             referencias_selecionadas=[model_to_dict(ref) for ref in input_data.referencias_selecionadas],
+            relatorio_consensus=input_data.relatorio_consensus,
         )
         
         # Força Header CORS manual (Cinto e Suspensórios)

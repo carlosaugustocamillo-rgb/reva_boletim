@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel RevaCast</title>
+    <title>Revahub</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -284,8 +284,25 @@
             </label>
         </div>
 
+        <div style="text-align:left; margin-bottom: 16px; background:#f7f3ff; padding:15px; border-radius:8px; border:1px solid #ded2f5;">
+            <strong style="display:block; margin-bottom:8px; color:#6f42c1;">Relatório Consensus</strong>
+            <textarea id="consensusReportText" rows="8"
+                placeholder="Cole aqui o relatório exportado/copiado do Consensus.app..."
+                style="width:100%; padding:12px; border:1px solid #cfc3e8; border-radius:8px; box-sizing:border-box; font-size:14px; resize:vertical; font-family: inherit;"></textarea>
+            <div style="margin-top:10px; margin-bottom:10px; text-align:left;">
+                <input type="file" id="consensusPdfFile" accept="application/pdf,.pdf"
+                    style="width:100%; font-size:13px;">
+            </div>
+            <button id="btnImportConsensus" onclick="importarConsensusRevaMais()" style="background-color:#6f42c1; margin-top:10px; margin-bottom:0;">
+                📥 Importar Consensus para Curadoria
+            </button>
+            <button id="btnImportConsensusPdf" onclick="importarConsensusPdfRevaMais()" style="background-color:#8a5a00; margin-top:10px; margin-bottom:0;">
+                📄 Importar PDF do Consensus
+            </button>
+        </div>
+
         <button id="btnBuscarRevaRefs" onclick="buscarArtigosRevaMais()" style="background-color: #17a2b8; margin-bottom: 10px;">
-            🔎 Buscar Artigos para Curadoria
+            🔎 Buscar Artigos no PubMed
         </button>
 
         <div id="revamaisArticlePicker"
@@ -345,6 +362,7 @@
 
         let lastRevaMaisResult = null;
         let lastRevaMaisReferences = [];
+        let lastConsensusReportText = '';
 
         function escapeHtml(text) {
             if (text === null || text === undefined) return '';
@@ -371,8 +389,12 @@
             const picker = document.getElementById('revamaisArticlePicker');
             const temaInput = document.getElementById('temaReva');
             const referencias = result.referencias_sugeridas || [];
+            const autoSelectAll = Boolean(result.auto_select_all_references);
 
             lastRevaMaisReferences = referencias;
+            if (result.relatorio_consensus) {
+                lastConsensusReportText = result.relatorio_consensus;
+            }
 
             if (!temaInput.value.trim() && result.tema) {
                 temaInput.value = result.tema;
@@ -387,37 +409,53 @@
                 return;
             }
 
-            const refsHtml = referencias.map((ref, index) => `
-                <label style="display:block; margin:12px 0; padding:12px; border:1px solid #e5e5ef; border-radius:8px; background:#fafafa;">
-                    <div style="display:flex; align-items:flex-start; gap:10px;">
-                        <input type="checkbox" class="revamais-ref-checkbox" data-index="${index}" ${index < 3 ? 'checked' : ''} style="margin-top:4px;">
-                        <div>
-                            <div style="font-weight:bold; color:#205776;">${index + 1}. ${escapeHtml(ref.texto || 'Sem título')}</div>
-                            <div style="font-size:12px; color:#666; margin:4px 0;">
-                                PMID: ${escapeHtml(ref.pmid || '-')} | JIF: ${(ref.jif || 0).toFixed(1)} | Journal: ${escapeHtml(ref.journal || '-')}
-                            </div>
-                            <div style="font-size:13px; color:#444; line-height:1.45;">
-                                ${escapeHtml((ref.resumo || 'Resumo não disponível.').slice(0, 700))}${(ref.resumo || '').length > 700 ? '...' : ''}
-                            </div>
-                            <div style="margin-top:8px;">
-                                <a href="${ref.link}" target="_blank" style="font-size:12px;">Abrir no PubMed</a>
+            const refsHtml = referencias.map((ref, index) => {
+                const sourceLabel = ref.source_label || ref.fonte || (ref.pmid ? 'PubMed' : 'Fonte');
+                const metaParts = [];
+                if (ref.pmid) metaParts.push(`PMID: ${escapeHtml(ref.pmid)}`);
+                if (ref.doi) metaParts.push(`DOI: ${escapeHtml(ref.doi)}`);
+                if (ref.journal) metaParts.push(`Journal: ${escapeHtml(ref.journal)}`);
+                if (ref.tipo_estudo) metaParts.push(`Tipo: ${escapeHtml(ref.tipo_estudo)}`);
+                if (ref.jif && ref.jif > 0) metaParts.push(`JIF: ${Number(ref.jif).toFixed(1)}`);
+                metaParts.push(`Fonte: ${escapeHtml(sourceLabel)}`);
+
+                const linkHtml = ref.link
+                    ? `<div style="margin-top:8px;"><a href="${escapeHtml(ref.link)}" target="_blank" style="font-size:12px;">Abrir ${escapeHtml(sourceLabel)}</a></div>`
+                    : '';
+
+                return `
+                    <label style="display:block; margin:12px 0; padding:12px; border:1px solid #e5e5ef; border-radius:8px; background:#fafafa;">
+                        <div style="display:flex; align-items:flex-start; gap:10px;">
+                            <input type="checkbox" class="revamais-ref-checkbox" data-index="${index}" ${(autoSelectAll || index < 3) ? 'checked' : ''} style="margin-top:4px;">
+                            <div>
+                                <div style="font-weight:bold; color:#205776;">${index + 1}. ${escapeHtml(ref.texto || 'Sem título')}</div>
+                                <div style="font-size:12px; color:#666; margin:4px 0;">
+                                    ${metaParts.join(' | ')}
+                                </div>
+                                <div style="font-size:13px; color:#444; line-height:1.45;">
+                                    ${escapeHtml((ref.resumo || 'Resumo não disponível.').slice(0, 700))}${(ref.resumo || '').length > 700 ? '...' : ''}
+                                </div>
+                                ${linkHtml}
                             </div>
                         </div>
-                    </div>
-                </label>
-            `).join('');
+                    </label>
+                `;
+            }).join('');
 
             picker.style.display = 'block';
+            const defaultSelectionText = autoSelectAll
+                ? 'Todas as referências do relatório vieram marcadas por padrão.'
+                : 'Selecione os artigos que devem entrar no boletim. Os 3 primeiros vêm marcados por padrão.';
             picker.innerHTML = `
                 <strong style="display:block; color:#6f42c1; margin-bottom:8px;">Curadoria de Artigos</strong>
                 <div style="font-size:13px; color:#555; margin-bottom:10px;">
                     Tema resolvido: <b>${escapeHtml(result.tema || '')}</b><br>
-                    Query científica: <code>${escapeHtml(result.tema_ingles || '')}</code><br>
+                    Fonte científica: <code>${escapeHtml(result.fonte_referencias || result.tema_ingles || '')}</code><br>
                     Modelo de busca/preparo: <code>${escapeHtml(result.modelo_texto_busca || '')}</code><br>
                     Modelo de redação final: <code>${escapeHtml(result.modelo_texto_redacao || '')}</code>
                 </div>
                 <div style="font-size:13px; color:#555; margin-bottom:10px;">
-                    Selecione os artigos que devem entrar no boletim. Os 3 primeiros vêm marcados por padrão.
+                    ${defaultSelectionText}
                 </div>
                 ${refsHtml}
             `;
@@ -453,6 +491,7 @@
                     throw new Error(data.resultado.message || 'Erro ao preparar referências');
                 }
 
+                lastConsensusReportText = '';
                 renderRevaMaisReferences(data.resultado);
                 statusDiv.className = 'success';
                 statusDiv.innerHTML = `✅ <strong>Referências preparadas.</strong><br>Revise os artigos e então clique em <b>Criar Reva +</b>.`;
@@ -462,7 +501,127 @@
                 statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + error.message;
             } finally {
                 btn.disabled = false;
-                btn.innerHTML = '🔎 Buscar Artigos para Curadoria';
+                btn.innerHTML = '🔎 Buscar Artigos no PubMed';
+            }
+        }
+
+        async function importarConsensusRevaMais() {
+            const btn = document.getElementById('btnImportConsensus');
+            const statusDiv = document.getElementById('statusReva');
+            const tema = document.getElementById('temaReva').value.trim();
+            const relatorio = document.getElementById('consensusReportText').value.trim();
+
+            if (!relatorio) {
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Relatório vazio:</strong><br>Cole o relatório do Consensus antes de importar.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = 'Importando Consensus...';
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Estruturando relatório do Consensus...</div>';
+
+            try {
+                const response = await fetch('/importar-consensus-revamais', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tema: tema,
+                        relatorio: relatorio,
+                        quantidade_referencias: null
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.erro || 'Erro ao importar relatório Consensus');
+                }
+
+                if (data.resultado.status === 'error') {
+                    throw new Error(data.resultado.message || 'Nenhuma referência foi extraída');
+                }
+
+                renderRevaMaisReferences(data.resultado);
+                statusDiv.className = 'success';
+                const warningHtml = data.resultado.parser_warning
+                    ? '<br><small>A extração automática usou fallback; revise as referências com atenção.</small>'
+                    : '';
+                statusDiv.innerHTML = `✅ <strong>Consensus importado.</strong><br>Revise as referências e então clique em <b>Criar Reva +</b>.${warningHtml}`;
+            } catch (error) {
+                console.error(error);
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '📥 Importar Consensus para Curadoria';
+            }
+        }
+
+        async function importarConsensusPdfRevaMais() {
+            const btn = document.getElementById('btnImportConsensusPdf');
+            const statusDiv = document.getElementById('statusReva');
+            const tema = document.getElementById('temaReva').value.trim();
+            const fileInput = document.getElementById('consensusPdfFile');
+            const file = fileInput.files && fileInput.files[0];
+
+            if (!file) {
+                statusDiv.style.display = 'block';
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>PDF ausente:</strong><br>Selecione o PDF exportado do Consensus antes de importar.';
+                return;
+            }
+
+            btn.disabled = true;
+            btn.innerHTML = 'Lendo PDF...';
+            statusDiv.style.display = 'block';
+            statusDiv.className = '';
+            statusDiv.innerHTML = '<div class="spinner"></div><div class="loading">Extraindo texto do PDF do Consensus...</div>';
+
+            try {
+                const pdfBase64 = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(String(reader.result || ''));
+                    reader.onerror = () => reject(new Error('Falha ao ler o PDF localmente.'));
+                    reader.readAsDataURL(file);
+                });
+
+                const response = await fetch('/importar-consensus-revamais-pdf', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tema: tema,
+                        filename: file.name,
+                        pdf_base64: pdfBase64,
+                        quantidade_referencias: null
+                    })
+                });
+
+                const data = await response.json();
+                if (!data.success) {
+                    throw new Error(data.erro || 'Erro ao importar PDF do Consensus');
+                }
+
+                if (data.resultado.status === 'error') {
+                    throw new Error(data.resultado.message || 'Nenhuma referência foi extraída do PDF');
+                }
+
+                document.getElementById('consensusReportText').value = data.resultado.relatorio_consensus || '';
+                renderRevaMaisReferences(data.resultado);
+                statusDiv.className = 'success';
+                const warningHtml = data.resultado.parser_warning
+                    ? '<br><small>A extração do PDF usou parser local; revise as referências antes de gerar o Reva+.</small>'
+                    : '';
+                statusDiv.innerHTML = `✅ <strong>PDF do Consensus importado.</strong><br>Revise as referências e então clique em <b>Criar Reva +</b>.${warningHtml}`;
+            } catch (error) {
+                console.error(error);
+                statusDiv.className = 'error';
+                statusDiv.innerHTML = '❌ <strong>Erro:</strong><br>' + error.message;
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '📄 Importar PDF do Consensus';
             }
         }
 
@@ -1024,7 +1183,8 @@
                         gerar_midia: gerar_midia,
                         gerar_instagram: gerar_instagram,
                         enviar_email: enviar_email,
-                        referencias_selecionadas: referencias_selecionadas
+                        referencias_selecionadas: referencias_selecionadas,
+                        relatorio_consensus: lastConsensusReportText
                     })
                 });
 

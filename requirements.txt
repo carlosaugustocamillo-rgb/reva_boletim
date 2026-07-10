@@ -11,3 +11,4 @@ podgen
 google-generativeai
 Pillow
 requests
+pypdf
