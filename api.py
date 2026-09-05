@@ -15,6 +15,7 @@ import firebase_admin
 from firebase_admin import credentials, storage
 from datetime import datetime
 import re
+from elevenlabs_utils import diagnosticar_erro_elevenlabs
 
 def simple_slugify(text):
     text = text.lower().strip()
@@ -414,7 +415,8 @@ def iniciar_boletim(
     brief_spotify: bool = True,
     audio: bool = True,
     mailchimp: bool = True,
-    firebase: bool = True
+    firebase: bool = True,
+    referencias_pubmed: bool = True,
 ):
     task_id = str(uuid.uuid4())
     opcoes = {
@@ -426,6 +428,7 @@ def iniciar_boletim(
         'mailchimp': mailchimp,
         'firebase': firebase
     }
+    opcoes['referencias_pubmed'] = referencias_pubmed
     
     # Cria o arquivo inicial
     save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando..."], "result": None})
@@ -666,6 +669,22 @@ async def baixar_brief_spotify(data_ref: str):
         media_type="text/plain; charset=utf-8"
     )
 
+@app.get("/baixar-referencias-podcast/{data_ref}")
+async def baixar_referencias_podcast(data_ref: str):
+    """Relatório de fontes e triagem, separado do boletim enviado por e-mail."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", data_ref):
+        return JSONResponse(status_code=400, content={"error": "Use YYYY-MM-DD."})
+    try:
+        datetime.strptime(data_ref, "%Y-%m-%d")
+    except ValueError:
+        return JSONResponse(status_code=400, content={"error": "Data inválida."})
+    filename = f"contexto_pubmed_{data_ref}.json"
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "referencias", filename)
+    if not os.path.isfile(path):
+        return JSONResponse(status_code=404, content={"error": "Referências não encontradas para esta edição."})
+    return FileResponse(path=path, filename=filename, media_type="application/json")
+
+
 @app.get("/testar-firebase")
 async def start_firebase_test():
     """Rota para diagnosticar conexão com Firebase (Storage e Firestore)."""
@@ -868,7 +887,8 @@ def rodar_boletim_stream(
     brief_spotify: bool = True,
     audio: bool = True,
     mailchimp: bool = True,
-    firebase: bool = True
+    firebase: bool = True,
+    referencias_pubmed: bool = True,
 ):
     """
     Endpoint de streaming que envia atualizações de progresso via Server-Sent Events (SSE).
@@ -883,6 +903,7 @@ def rodar_boletim_stream(
         'mailchimp': mailchimp,
         'firebase': firebase
     }
+    opcoes['referencias_pubmed'] = referencias_pubmed
 
     def iter_boletim():
         try:
@@ -972,102 +993,47 @@ def debug_import():
 @app.get("/teste-audio-curto")
 def teste_audio_curto():
     """
-    Gera um áudio de teste curto (2 falas) e faz upload para o Firebase
-    para validar o fluxo completo sem gastar muitos créditos.
+    Testa o mesmo Text to Dialogue/Eleven v3 usado pelo RevaCast Weekly
+    e faz upload para o Firebase com baixo consumo de caracteres.
     """
     try:
         import os
-        from elevenlabs.client import ElevenLabs
-        from elevenlabs import VoiceSettings
-        from pydub import AudioSegment
+        from boletim_service import gerar_dialogo_com_eleven_v3
         from firebase_service import upload_file
-        
-        # Configuração
-        API_KEY = os.environ.get("ELEVENLABS_API_KEY")
+
+        api_key = os.environ.get("ELEVENLABS_API_KEY")
         VOICE_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
-        VOICE_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "x3mAOLD9WzlmrFCwA1S3")
-        
-        if not API_KEY:
+        VOICE_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "tnSpp4vdxKPjI9w0GnoV")
+
+        if not api_key:
             return {"status": "error", "message": "Sem chave ElevenLabs configurada."}
-            
-        client = ElevenLabs(api_key=API_KEY)
-        
-        # Roteiro curto
+
         roteiro = [
             {"speaker": "HOST", "text": "Olá, este é um teste rápido do RevaCast para validar o sistema."},
             {"speaker": "COHOST", "text": "Exato! Estamos testando a velocidade e o upload para o Firebase."}
         ]
-        
-        audios_temp = []
+
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
         os.makedirs(base_dir, exist_ok=True)
-        
-        # Gera áudios
-        for i, fala in enumerate(roteiro):
-            voice_id = VOICE_HOST if fala['speaker'] == "HOST" else VOICE_COHOST
-            model = "eleven_turbo_v2_5" if fala['speaker'] == "HOST" else "eleven_multilingual_v2"
-            
-            audio_gen = client.text_to_speech.convert(
-                voice_id=voice_id,
-                text=fala['text'],
-                model_id=model,
-                voice_settings=VoiceSettings(stability=0.4, similarity_boost=0.8, style=0.6, use_speaker_boost=True)
-            )
-            
-            temp_path = os.path.join(base_dir, f"temp_test_{i}.mp3")
-            with open(temp_path, "wb") as f:
-                for chunk in audio_gen: f.write(chunk)
-            
-            # Aplica velocidade
-            seg = AudioSegment.from_file(temp_path)
-            speed = 1.0 if fala['speaker'] == "HOST" else 1.30
-            
-            # Só aplica speedup se for diferente de 1.0 para evitar processamento desnecessário/ruído
-            if speed != 1.0:
-                seg_fast = seg.speedup(playback_speed=speed)
-                seg_fast.export(temp_path, format="mp3")
-                audios_temp.append(seg_fast) # Append the modified segment
-            else:
-                # Se for 1.0, mantém o arquivo original (ElevenLabs direto)
-                # No caso de 1.0, seg_fast não é criado, então usamos 'seg'
-                audios_temp.append(seg)
-            
-        # Junta tudo
-        final_audio = AudioSegment.empty()
-        
-        # Adiciona Intro se existir
-        intro_path = os.path.join(base_dir, "intro_guto.mp3")
-        if os.path.exists(intro_path):
-            try:
-                intro = AudioSegment.from_file(intro_path)
-                final_audio += intro + AudioSegment.silent(duration=1000)
-            except Exception as e:
-                print(f"Erro ao carregar intro no teste: {e}")
-        
-        for a in audios_temp:
-            final_audio += a + AudioSegment.silent(duration=500)
-            
         final_path = os.path.join(base_dir, "teste_fluxo_completo.mp3")
-        final_audio.export(final_path, format="mp3")
-        
-        # Upload
+        gerar_dialogo_com_eleven_v3(roteiro, final_path)
         url = upload_file(final_path, "testes/teste_fluxo_completo.mp3")
-        
+
         return {
             "status": "success",
             "message": "Áudio gerado e enviado com sucesso!",
             "url": url,
+            "model": os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v3"),
             "host_voice": VOICE_HOST,
             "cohost_voice": VOICE_COHOST
         }
-        
+
     except Exception as e:
-        import traceback
-        return {
+        diagnostico = diagnosticar_erro_elevenlabs(e)
+        return JSONResponse(status_code=424, content={
             "status": "error",
-            "message": str(e),
-            "traceback": traceback.format_exc()
-        }
+            **diagnostico,
+        })
 
 
 @app.get("/rescue-audio")

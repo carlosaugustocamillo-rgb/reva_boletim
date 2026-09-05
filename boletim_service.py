@@ -39,6 +39,10 @@ from pydub import AudioSegment
 from mailchimp_marketing import Client
 from mailchimp_marketing.api_client import ApiClientError
 from dotenv import load_dotenv
+from pubmed_related import (
+    publication_date, enabled_from_env, enrich_episode, context_for_script,
+    references_for_notes, save_json,
+)
 
 # Carrega variáveis de ambiente do arquivo .env
 # Carrega variáveis de ambiente do arquivo .env
@@ -90,6 +94,7 @@ mc.set_config({"api_key": MC_API_KEY, "server": MC_SERVER})
 
 from elevenlabs.client import ElevenLabs
 from elevenlabs import VoiceSettings
+from elevenlabs_utils import formatar_erro_elevenlabs
 
 # ... (imports)
 
@@ -222,6 +227,7 @@ def buscar_info_estruturada(ids):
         journal_info = art_data['Journal']['JournalIssue']
         artigo['journal'] = art_data['Journal']['Title']
         artigo['ano'] = journal_info['PubDate'].get('Year', 's/ano')
+        artigo['data_publicacao'] = publication_date(art_data)
         artigo['volume'] = journal_info.get('Volume', 's/vol')
         artigo['issue'] = journal_info.get('Issue', 's/issue')
         artigo['paginas'] = art_data.get('Pagination', {}).get('MedlinePgn', 's/páginas')
@@ -296,10 +302,11 @@ def traduzir_resumo(texto):
         return resposta.choices[0].message.content.strip()
 
 
-def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False):
+def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False, contexto_pubmed=None, data_estudo=""):
     """
     Gera um roteiro de podcast em formato de CONVERSA entre dois apresentadores,
-    com base no RESUMO TRADUZIDO. Retorna uma lista de dicionários com speaker e text.
+    com base no resumo traduzido e, se disponíveis, referências anteriores triadas.
+    Retorna uma lista de dicionários com speaker e text.
     """
     import random
     
@@ -349,7 +356,11 @@ REGRAS DE ESTILO (CRÍTICO):
 ESTRUTURA TÉCNICA (Rigor Obrigatório):
 - Apresente o estudo: "{titulo}" ({primeiro_autor}).
 - Metodologia: Explique o desenho de forma clara.
-- Resultados: Diga os números exatos (P-valor, IC), pois o público é médico/técnico.
+- Resultados: Diga os números exatos (P-valor, IC) SOMENTE quando presentes no resumo.
+- Não invente amostra, estatísticas, métodos ou conclusões ausentes nas fontes.
+- Situe os dados no período do estudo; não apresente estatísticas históricas como dados atuais.
+- Se o contexto complementar trouxer referências, inclua o bloco obrigatório de contextualização
+  com autor e ano, sem aumentar o número de estudos principais do episódio.
 - Conclusão: Implicação prática.
 
 FORMATO:
@@ -359,9 +370,13 @@ Use a notação para entonação se a IA de voz suportar, mas foque no TEXTO ser
 Contexto do estudo:
 Título: {titulo}
 Primeiro autor: {primeiro_autor}
+Data de publicação: {data_estudo or 'não informada'}
 
 Resumo traduzido:
 {resumo_pt}
+
+Contexto científico complementar:
+{context_for_script(contexto_pubmed)}
 
 FORMATO DE RETORNO (JSON array):
 Retorne APENAS um array JSON válido.
@@ -567,6 +582,8 @@ REGRAS CLARAS:
 7) No estudo final, manter encerramento caloroso de podcast.
 8) Não use cabeçalhos dentro das falas; a conversa deve soar contínua.
 9) Manter ORDEM e QUANTIDADE de estudos.
+10) Preserve autores, anos, atribuições e limitações das referências de contexto.
+    Não apresente referências anteriores como estudos novos desta semana.
 
 FORMATO DE SAÍDA (OBRIGATÓRIO):
 Retorne SOMENTE JSON válido:
@@ -687,6 +704,7 @@ Regras:
    - 1 fechamento curto convidando a ouvir o episódio.
 5) Não usar tabelas, não usar JSON e não usar cabeçalhos técnicos.
 6) Texto final em português do Brasil, pronto para colar no Spotify.
+7) Referências anteriores citadas para contextualizar não são novidades da semana.
 
 Data de referência: {data_ref}
 Títulos dos estudos:
@@ -1334,6 +1352,7 @@ def rodar_boletim(opcoes=None):
       - 'audio': Gera o áudio (ElevenLabs)
       - 'mailchimp': Cria e agenda campanha
       - 'firebase': Upload e RSS
+      - 'referencias_pubmed': Contexto anterior exclusivo do podcast (padrão: variável de ambiente)
     """
     if opcoes is None:
         opcoes = {
@@ -1359,6 +1378,7 @@ def rodar_boletim(opcoes=None):
     episodio_filename = f"{base_episodio_name}.mp3"
     episodio_path = os.path.join(AUDIO_DIR, episodio_filename) # Usando AUDIO_DIR para manter organizado
     brief_spotify_path = os.path.join(BASE_DIR, f"brief_spotify_{hoje}.txt")
+    referencias_pubmed_path = os.path.join(BASE_DIR, "referencias", f"contexto_pubmed_{hoje}.json")
     if not os.path.exists(AUDIO_DIR): os.makedirs(AUDIO_DIR, exist_ok=True)
     
     # Versionamento: se já existe, cria _1, _2...
@@ -1374,6 +1394,8 @@ def rodar_boletim(opcoes=None):
     titulos_podcast = []
     brief_spotify_text = ""
     total_chars_elevenlabs = 0
+    contexto_pubmed_report = None
+    referencias_pubmed_salvas = False
     
     # ------------------------------------------------------------------
     # 1) BOLETIM PRINCIPAL & DETALHADO (RESUMOS)
@@ -1520,6 +1542,11 @@ def rodar_boletim(opcoes=None):
                     artigos_vistos_podcast.add(art['pmid'])
                     primeiro_autor = art['autores'][0] if art['autores'] else "Autor não identificado"
                     todos_artigos_relevantes.append({
+                        'pmid': str(art['pmid']),
+                        'doi': art.get('doi', ''),
+                        'autores': art.get('autores', []),
+                        'journal': art.get('journal', ''),
+                        'data_publicacao': art.get('data_publicacao', ''),
                         'titulo': art['titulo'],
                         'resumo_traduzido': resumo_traduzido,
                         'primeiro_autor': primeiro_autor,
@@ -1634,6 +1661,25 @@ def rodar_boletim(opcoes=None):
             roteiros_audio = []
             titulos_podcast = []
             if artigos_podcast:
+                referencias_ativas = enabled_from_env() and opcoes.get('referencias_pubmed', True)
+                if referencias_ativas:
+                    yield "🔗 Buscando contexto científico anterior no PubMed (somente podcast)..."
+                contexto_pubmed_report = enrich_episode(
+                    artigos_podcast, BASE_DIR, client, enabled=referencias_ativas,
+                    today=datetime.now(pytz.timezone("America/Sao_Paulo")).date(),
+                )
+                contexto_por_pmid = {
+                    item['pmid_ancora']: item for item in contexto_pubmed_report['estudos']
+                }
+                if referencias_ativas:
+                    total_referencias = sum(len(item['referencias']) for item in contexto_pubmed_report['estudos'])
+                    yield f"🔗 Contexto PubMed: {total_referencias} referência(s) admitida(s) pela triagem automática."
+                    try:
+                        save_json(referencias_pubmed_path, contexto_pubmed_report)
+                        referencias_pubmed_salvas = True
+                        yield "📚 Referências e decisões da triagem salvas para revisão editorial."
+                    except OSError:
+                        yield "⚠️ Não foi possível salvar o relatório de referências do podcast."
                 yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos selecionados..."
                 
                 for idx, art in enumerate(artigos_podcast):
@@ -1641,14 +1687,16 @@ def rodar_boletim(opcoes=None):
                     yield f"   - Roteirizando estudo {idx+1}/{len(artigos_podcast)}: {art.get('titulo', 'Sem título')[:30]}..."
                     
                     autores_list = art.get('autores', [])
-                    primeiro_autor = autores_list[0] if autores_list else "Autor desconhecido"
+                    primeiro_autor = autores_list[0] if autores_list else art.get('primeiro_autor', 'Autor desconhecido')
                     
                     dialogo = resumo_para_podcast(
                         titulo=art.get('titulo', 'Sem título'),
                         resumo_pt=art.get('resumo_traduzido', ''),
                         primeiro_autor=primeiro_autor,
                         idx=idx,
-                        is_last=is_last
+                        is_last=is_last,
+                        contexto_pubmed=contexto_por_pmid.get(str(art.get('pmid', ''))),
+                        data_estudo=art.get('data_publicacao', ''),
                     )
                     roteiros_audio.append(normalizar_dialogo(dialogo))
                     titulos_podcast.append(art.get('titulo', f'Estudo {idx+1}'))
@@ -1725,6 +1773,7 @@ def rodar_boletim(opcoes=None):
                         "date": hoje,
                         "script": roteiros_audio,
                         "script_original": roteiros_audio_original,
+                        "contexto_pubmed": contexto_pubmed_report,
                         "created_at": datetime.now().isoformat()
                     }
                     save_firestore_document("roteiros", f"roteiro_{hoje}", doc_data)
@@ -1739,6 +1788,10 @@ def rodar_boletim(opcoes=None):
                     titulos_estudos=titulos_podcast,
                     data_ref=hoje
                 ).strip()
+
+                notas_referencias = references_for_notes(contexto_pubmed_report)
+                if brief_spotify_text and notas_referencias:
+                    brief_spotify_text += "\n\n" + notas_referencias
 
                 if brief_spotify_text:
                     with open(brief_spotify_path, "w", encoding="utf-8") as f:
@@ -1781,6 +1834,8 @@ def rodar_boletim(opcoes=None):
         elif roteiros_audio:
             yield "🎙️ Gerando Áudio (ElevenLabs)..."
             audio_paths = []
+            erros_audio = []
+            estudos_audio_gerados = 0
             
             # --- GERAÇÃO DA ABERTURA FALADA (IVO E MANU) ---
             import random
@@ -1826,7 +1881,7 @@ def rodar_boletim(opcoes=None):
                         )
                         usou_dialogue_v3 = True
                     except Exception as e_v3_intro:
-                        print(f"⚠️ Eleven v3 na abertura falhou, usando fallback: {e_v3_intro}")
+                        print(f"⚠️ Eleven v3 na abertura falhou, usando fallback: {formatar_erro_elevenlabs(e_v3_intro)}")
 
                 if not usou_dialogue_v3:
                     for idx_intro, fala in enumerate(normalizar_dialogo_para_audio(abertura_escolhida)):
@@ -1854,7 +1909,9 @@ def rodar_boletim(opcoes=None):
                     abertura_combinada.export(path_abertura_final, format="mp3")
 
             except Exception as e:
-                print(f"Erro ao gerar abertura: {e}")
+                erro_formatado = formatar_erro_elevenlabs(e)
+                erros_audio.append(erro_formatado)
+                print(f"Erro ao gerar abertura: {erro_formatado}")
 
             # --- FIM DA ABERTURA ---
             
@@ -1901,6 +1958,7 @@ def rodar_boletim(opcoes=None):
                                 ),
                             )
                             audio_paths.append(caminho_gerado)
+                            estudos_audio_gerados += 1
                             usou_dialogue_v3 = True
 
                             if opcoes.get('firebase'):
@@ -1911,7 +1969,7 @@ def rodar_boletim(opcoes=None):
                                 except Exception as e_upload:
                                     print(f"⚠️ Erro upload audio v3: {e_upload}")
                         except Exception as e_v3:
-                            print(f"⚠️ Eleven v3 falhou no estudo {estudo_idx+1}, usando fallback: {e_v3}")
+                            print(f"⚠️ Eleven v3 falhou no estudo {estudo_idx+1}, usando fallback: {formatar_erro_elevenlabs(e_v3)}")
 
                     if usou_dialogue_v3:
                         continue
@@ -1993,14 +2051,24 @@ def rodar_boletim(opcoes=None):
                         
                         estudo_combinado.export(caminho_estudo, format="mp3")
                         audio_paths.append(caminho_estudo)
+                        estudos_audio_gerados += 1
                         
                         # Mantendo arquivos temporários para permitir edição/remixagem posterior
                         # for temp_path in estudo_audios: os.remove(temp_path)
                 except Exception as e:
-                    print(f"Erro audio: {e}")
+                    erro_formatado = formatar_erro_elevenlabs(e)
+                    erros_audio.append(erro_formatado)
+                    print(f"Erro audio: {erro_formatado}")
 
             # Intro e mixagem final
-            if audio_paths:
+            if estudos_audio_gerados == 0:
+                # Nunca publique um episodio composto apenas pela abertura.
+                audio_paths = []
+                detalhe = erros_audio[0] if erros_audio else "Nenhum estudo produziu um segmento de audio valido."
+                yield f"❌ Áudio não gerado: {detalhe}"
+            elif audio_paths:
+                if erros_audio:
+                    yield f"⚠️ Áudio parcial: {estudos_audio_gerados} estudo(s) gerado(s); {len(erros_audio)} falharam."
                 yield "   - Montando episódio final..."
                 print(f"📂 Arquivos para mixagem ({len(audio_paths)}):")
                 for p in audio_paths:
@@ -2205,6 +2273,9 @@ def rodar_boletim(opcoes=None):
         "brief_spotify_path": brief_spotify_path if os.path.exists(brief_spotify_path) else None,
         "brief_spotify_text": brief_spotify_text if brief_spotify_text else None,
         "brief_spotify_download_url": f"/baixar-brief/{hoje}" if os.path.exists(brief_spotify_path) else None,
+        "referencias_pubmed_path": referencias_pubmed_path if referencias_pubmed_salvas else None,
+        "referencias_pubmed_download_url": f"/baixar-referencias-podcast/{hoje}" if referencias_pubmed_salvas else None,
+        "referencias_pubmed": contexto_pubmed_report,
         "audio_url": audio_url,
         "rss_url": rss_url,
         "mailchimp": {"status": mailchimp_status, "error": mailchimp_error},

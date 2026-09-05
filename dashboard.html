@@ -181,6 +181,10 @@
                 <input type="checkbox" id="opt_roteiro" checked> 2. Criar Roteiro do Podcast
             </label>
 
+            <label style="display: block; margin: 5px 0 5px 20px;">
+                <input type="checkbox" id="opt_referencias_pubmed" checked> Contextualizar o podcast com estudos anteriores (PubMed)
+            </label>
+
             <label style="display: block; margin: 5px 0;">
                 <input type="checkbox" id="opt_revisao_roteiro" checked> 3. Revisar Fluidez do Roteiro (IA - Etapa 8.5)
             </label>
@@ -836,6 +840,7 @@
             // Lê as opções
             const resumos = document.getElementById('opt_resumos').checked;
             const roteiro = document.getElementById('opt_roteiro').checked;
+            const referencias_pubmed = document.getElementById('opt_referencias_pubmed').checked;
             const revisao_roteiro = document.getElementById('opt_revisao_roteiro').checked;
             const audio = document.getElementById('opt_audio').checked;
             const mailchimp = document.getElementById('opt_mailchimp').checked;
@@ -853,7 +858,7 @@
 
             // Monta query params
             const params = new URLSearchParams({
-                resumos, roteiro, revisao_roteiro, audio, mailchimp, firebase
+                resumos, roteiro, referencias_pubmed, revisao_roteiro, audio, mailchimp, firebase
             });
 
             try {
@@ -1067,6 +1072,16 @@
                     </div>
                     `;
                                 logDiv.innerHTML += briefBtn;
+                            }
+
+                            if (data.result && data.result.referencias_pubmed_download_url) {
+                                const referenceLink = document.createElement('a');
+                                referenceLink.href = data.result.referencias_pubmed_download_url;
+                                referenceLink.textContent = '📚 Baixar referências e triagem do podcast';
+                                referenceLink.style.display = 'block';
+                                referenceLink.style.marginTop = '10px';
+                                referenceLink.download = `contexto_pubmed_${data.result.data_referencia}.json`;
+                                logDiv.appendChild(referenceLink);
                             }
 
                             if (data.result && data.result.custos) {
