@@ -200,17 +200,56 @@ def buscar_ids(query):
     return record["IdList"]
 
 
+def _ler_registros_pubmed(ids, tentativas=3):
+    """Lê um lote do EFetch, repetindo também falhas ocorridas no Entrez.read."""
+    ultimo_erro = None
+    for tentativa in range(1, tentativas + 1):
+        handle = None
+        try:
+            time.sleep(2 if tentativa == 1 else 5)
+            handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
+            # Respostas chunked interrompidas geralmente só falham aqui, durante o read.
+            return Entrez.read(handle)
+        except Exception as error:
+            ultimo_erro = error
+            print(f"⚠️ Erro no efetch/read (tentativa {tentativa}/{tentativas}): {error}")
+        finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+    raise ultimo_erro
+
+
+def _ler_registros_pubmed_resiliente(ids):
+    """Tenta o lote completo e divide-o quando o NCBI encerra a resposta."""
+    try:
+        return _ler_registros_pubmed(ids)
+    except Exception as error:
+        if len(ids) <= 1:
+            print(f"⚠️ PMID {ids[0] if ids else 'desconhecido'} ignorado após falhas no PubMed: {error}")
+            return {"PubmedArticle": []}
+        meio = max(1, len(ids) // 2)
+        print(f"⚠️ Lote PubMed com {len(ids)} IDs falhou; dividindo em lotes menores.")
+        primeiro = _ler_registros_pubmed_resiliente(ids[:meio])
+        segundo = _ler_registros_pubmed_resiliente(ids[meio:])
+        return {
+            "PubmedArticle": primeiro.get("PubmedArticle", []) + segundo.get("PubmedArticle", []),
+        }
+
+
 def buscar_info_estruturada(ids):
     if not ids:
         return []
-    time.sleep(2) # Rate limit
-    try:
-        handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
-    except Exception as e:
-        print(f"⚠️ Erro no efetch (tentando de novo em 5s): {e}")
-        time.sleep(5)
-        handle = Entrez.efetch(db="pubmed", id=ids, rettype="xml", retmode="xml")
-    records = Entrez.read(handle)
+    ids = list(ids)
+    # Lotes menores reduzem a probabilidade de uma resposta XML truncada.
+    tamanho_lote = 10
+    records = {"PubmedArticle": []}
+    for inicio in range(0, len(ids), tamanho_lote):
+        lote = ids[inicio:inicio + tamanho_lote]
+        parte = _ler_registros_pubmed_resiliente(lote)
+        records["PubmedArticle"].extend(parte.get("PubmedArticle", []))
     artigos = []
     for article in records['PubmedArticle']:
         artigo = {}
