@@ -446,11 +446,26 @@ def context_for_script(result):
             "Sem referências complementares admitidas nesta execução. Baseie afirmações científicas "
             "somente no resumo principal. Isso NÃO demonstra inexistência de evidência anterior."
         )
+    def source_url(item):
+        pmid = str(item.get("pmid", "")).strip()
+        if pmid.isdigit():
+            return f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+        doi = str(item.get("doi", "")).strip()
+        if doi:
+            return f"https://doi.org/{doi}"
+        return str(item.get("url") or item.get("url_semantic_scholar") or "").strip()
+
+    mode = (result or {}).get("modo", "")
+    source_label = (
+        "REFERÊNCIAS ANTERIORES (curadoria manual no Connected Papers; similaridade não prova concordância ou qualidade):\n"
+        if mode == "manual"
+        else "REFERÊNCIAS ANTERIORES (triagem automática; similaridade não prova concordância ou qualidade):\n"
+    )
     return (
-        "REFERÊNCIAS ANTERIORES (triagem automática; similaridade não prova concordância ou qualidade):\n"
+        source_label
         + json.dumps([{
             **_source_for_prompt(item), "compatibilidade_e_limites": item["triagem"],
-            "url": f"https://pubmed.ncbi.nlm.nih.gov/{item['pmid']}/",
+            "url": source_url(item),
         } for item in references], ensure_ascii=False)
         + "\nÉ OBRIGATÓRIO inserir um bloco de 2 a 4 falas curtas de contextualização. "
         "Discuta pelo menos UMA das referências listadas acima, dizendo o SOBRENOME DO PRIMEIRO "
@@ -473,9 +488,25 @@ def references_for_notes(report):
     lines = ["Referências do episódio:"]
     for article in report.get("artigos_principais", []):
         if str(article.get("pmid", "")).isdigit():
-            lines.append(f"- Estudo principal: {article['titulo']} — https://pubmed.ncbi.nlm.nih.gov/{article['pmid']}/")
+            url = f"https://pubmed.ncbi.nlm.nih.gov/{article['pmid']}/"
+        elif article.get("doi"):
+            url = f"https://doi.org/{article['doi']}"
+        else:
+            url = article.get("url") or article.get("url_semantic_scholar") or ""
+        if url:
+            lines.append(f"- Estudo principal: {article['titulo']} — {url}")
     for study in report.get("estudos", []):
         for article in study.get("referencias", []):
-            lines.append(f"- Contexto anterior para PMID {study['pmid_ancora']}: {article['titulo']} ({article['data_publicacao']}) — https://pubmed.ncbi.nlm.nih.gov/{article['pmid']}/")
-    lines.append("Descoberta de referências complementares: PubMed Similar Articles (NLM/NCBI). Triagem automática a partir dos resumos; sujeita a revisão editorial.")
+            pmid = str(article.get("pmid", "")).strip()
+            if pmid.isdigit():
+                url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
+            elif article.get("doi"):
+                url = f"https://doi.org/{article['doi']}"
+            else:
+                url = article.get("url") or article.get("url_semantic_scholar") or ""
+            lines.append(f"- Contexto anterior para PMID {study['pmid_ancora']}: {article['titulo']} ({article.get('data_publicacao', article.get('ano', ''))})" + (f" — {url}" if url else ""))
+    if report.get("modo") == "manual":
+        lines.append("Descoberta de referências complementares: Connected Papers. Seleção manual; metadados/abstracts sujeitos a revisão editorial.")
+    else:
+        lines.append("Descoberta de referências complementares: PubMed Similar Articles (NLM/NCBI). Triagem automática a partir dos resumos; sujeita a revisão editorial.")
     return "\n".join(lines)

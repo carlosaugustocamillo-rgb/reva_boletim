@@ -16,6 +16,7 @@ from firebase_admin import credentials, storage
 from datetime import datetime
 import re
 from elevenlabs_utils import diagnosticar_erro_elevenlabs
+from connected_papers import build_manual_report, parse_bibtex
 
 def simple_slugify(text):
     text = text.lower().strip()
@@ -54,6 +55,17 @@ class NewsPayload(BaseModel):
     imagem_capa: str = None
     resumo: str = None
     autor: str = "Revalidatie"
+
+
+class ConnectedPapersImportInput(BaseModel):
+    content: str
+    filename: str = "connected_papers.bib"
+
+
+class ManualPodcastContextInput(BaseModel):
+    main_articles: list[dict] = Field(default_factory=list)
+    selected_by_anchor: dict[str, list[dict]] = Field(default_factory=dict)
+
 
 # Force rebuild for Python 3.11
 app = FastAPI(title="Revahub")
@@ -417,18 +429,28 @@ def iniciar_boletim(
     mailchimp: bool = True,
     firebase: bool = True,
     referencias_pubmed: bool = True,
+    payload: dict | None = None,
 ):
-    task_id = str(uuid.uuid4())
-    opcoes = {
+    body = payload or {}
+    query_options = {
         'resumos': resumos,
         'roteiro': roteiro,
         'revisao_roteiro': revisao_roteiro,
         'brief_spotify': brief_spotify,
         'audio': audio,
         'mailchimp': mailchimp,
-        'firebase': firebase
+        'firebase': firebase,
+        'referencias_pubmed': referencias_pubmed,
     }
-    opcoes['referencias_pubmed'] = referencias_pubmed
+    for key in query_options:
+        value = body.get(key)
+        if value is not None:
+            query_options[key] = value
+    task_id = str(uuid.uuid4())
+    opcoes = query_options
+    opcoes['somente_curadoria'] = bool(body.get('somente_curadoria'))
+    opcoes['artigos_podcast_aprovados'] = body.get('artigos_podcast_aprovados') or []
+    opcoes['contexto_pubmed_manual'] = body.get('contexto_pubmed_manual')
     
     # Cria o arquivo inicial
     save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando..."], "result": None})
@@ -441,6 +463,25 @@ def iniciar_boletim(
         "status": "started",
         "message": "Boletim iniciado em segundo plano. Verifique o status com o ID fornecido."
     }
+
+
+@app.post("/importar-connected-papers")
+def importar_connected_papers(payload: ConnectedPapersImportInput):
+    """Analisa um BibTeX exportado manualmente do Connected Papers."""
+    try:
+        result = parse_bibtex(payload.content)
+        result["arquivo_nome"] = payload.filename
+        return result
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+
+
+@app.post("/preparar-contexto-manual")
+def preparar_contexto_manual(payload: ManualPodcastContextInput):
+    """Valida a seleção manual e monta o contrato usado pelo roteirista."""
+    if not payload.main_articles:
+        return JSONResponse(status_code=400, content={"error": "Selecione ao menos um artigo principal."})
+    return build_manual_report(payload.main_articles, payload.selected_by_anchor)
 
 class RevaMaisInput(BaseModel):
     tema: str = ""

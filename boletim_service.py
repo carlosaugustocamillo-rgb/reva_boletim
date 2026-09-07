@@ -1660,20 +1660,52 @@ def rodar_boletim(opcoes=None):
 
             roteiros_audio = []
             titulos_podcast = []
+            approved_pmids = {str(item).strip() for item in opcoes.get('artigos_podcast_aprovados', []) if str(item).strip()}
+            if approved_pmids:
+                artigos_podcast = [art for art in artigos_podcast if str(art.get('pmid', '')).strip() in approved_pmids]
+                yield f"✅ Curadoria manual: {len(artigos_podcast)} estudo(s) principal(is) aprovado(s)."
+
+            if opcoes.get('somente_curadoria'):
+                yield {
+                    "tipo": "curadoria_podcast",
+                    "artigos_sugeridos": [
+                        {
+                            key: art.get(key, "")
+                            for key in (
+                                "pmid", "doi", "titulo", "autores", "journal",
+                                "data_publicacao", "tipos", "resumo_original",
+                            )
+                        }
+                        for art in artigos_podcast
+                    ],
+                    "limite": 6,
+                    "mensagem": "Revise os artigos sugeridos antes de buscar referências no Connected Papers.",
+                }
+                return
+
             if artigos_podcast:
                 referencias_ativas = enabled_from_env() and opcoes.get('referencias_pubmed', True)
-                if referencias_ativas:
+                contexto_manual = opcoes.get('contexto_pubmed_manual')
+                if contexto_manual:
+                    contexto_pubmed_report = contexto_manual
+                    referencias_ativas = True
+                    yield "📚 Usando referências selecionadas manualmente no Connected Papers."
+                elif referencias_ativas:
                     yield "🔗 Buscando contexto científico anterior no PubMed (somente podcast)..."
-                contexto_pubmed_report = enrich_episode(
-                    artigos_podcast, BASE_DIR, client, enabled=referencias_ativas,
-                    today=datetime.now(pytz.timezone("America/Sao_Paulo")).date(),
-                )
+                if not contexto_manual:
+                    contexto_pubmed_report = enrich_episode(
+                        artigos_podcast, BASE_DIR, client, enabled=referencias_ativas,
+                        today=datetime.now(pytz.timezone("America/Sao_Paulo")).date(),
+                    )
                 contexto_por_pmid = {
                     item['pmid_ancora']: item for item in contexto_pubmed_report['estudos']
                 }
                 if referencias_ativas:
                     total_referencias = sum(len(item['referencias']) for item in contexto_pubmed_report['estudos'])
-                    yield f"🔗 Contexto PubMed: {total_referencias} referência(s) admitida(s) pela triagem automática."
+                    if contexto_manual:
+                        yield f"🔗 Contexto Connected Papers: {total_referencias} referência(s) selecionada(s) manualmente."
+                    else:
+                        yield f"🔗 Contexto PubMed: {total_referencias} referência(s) admitida(s) pela triagem automática."
                     try:
                         save_json(referencias_pubmed_path, contexto_pubmed_report)
                         referencias_pubmed_salvas = True

@@ -1,20 +1,58 @@
 # Referências anteriores no podcast RevaCast Weekly
 
 A alteração é exclusiva do **podcast**. As buscas, traduções, textos principal e
-detalhado, HTML e agendamento do e-mail permanecem iguais. Não requer chave do
-Semantic Scholar nem assinatura do Connected Papers.
+detalhado, HTML e agendamento do e-mail permanecem iguais. A integração não usa
+chave de API do Semantic Scholar nem a API do Connected Papers: a exportação
+BibTeX é feita manualmente na conta do usuário.
 
 ## Uso
+
+### Curadoria manual com Connected Papers
+
+O painel agora oferece um fluxo em duas etapas para o podcast:
+
+1. Clique em **Sugerir artigos para revisar**. O pipeline faz a seleção semanal
+   normal e devolve no máximo seis estudos candidatos, sem gerar áudio nem enviar
+   e-mail.
+2. Marque os artigos principais que realmente devem entrar no episódio.
+3. Para cada artigo aprovado, abra um grafo no Connected Papers usando esse
+   artigo como origem e exporte o resultado em **BibTeX**. É possível selecionar
+   vários arquivos `.bib` de uma vez; cada arquivo representa uma âncora.
+4. Importe os arquivos no painel, marque os artigos relacionados que deseja usar
+   como contexto e clique em **Preparar contexto selecionado**.
+5. Clique em **Executar selecionados** para gerar o roteiro. O contexto manual é
+   usado somente no podcast; o boletim e o e-mail não recebem esses artigos.
+
+O exportador trata a primeira entrada BibTeX como âncora e as demais como
+candidatas. PMID, DOI, título, autores, data, abstract e links são preservados.
+O sistema não interpreta a posição no grafo como score de qualidade e não
+transforma similaridade em concordância clínica. A seleção continua sendo
+editorial e deve ser conferida antes da geração do áudio. Se um arquivo tiver
+uma âncora diferente do artigo aprovado, suas referências não serão anexadas a
+esse estudo; gere o grafo novamente para a âncora correta.
+
+Endpoints usados pelo painel:
+
+- `POST /importar-connected-papers`: recebe `{content, filename}` e retorna a
+  âncora e as candidatas normalizadas.
+- `POST /preparar-contexto-manual`: recebe `main_articles` e
+  `selected_by_anchor`, produzindo o mesmo contrato de contexto usado pelo
+  roteirista.
+- `POST /iniciar-boletim`: aceita `somente_curadoria=true`,
+  `artigos_podcast_aprovados` e `contexto_pubmed_manual` no JSON da execução.
 
 No painel, mantenha **Criar Roteiro do Podcast** e **Contextualizar o podcast com
 estudos anteriores (PubMed)** marcados. O recurso acompanha a geração normal.
 Na API, `referencias_pubmed=false` desativa a etapa por execução, tanto em
 `POST /iniciar-boletim` como em `GET /rodar-boletim-stream`.
 
-O limite inicial é de **dois estudos principais**, **12 candidatos por estudo**
-e **até duas referências anteriores por estudo**. O total atual de estudos do
-podcast não muda. A pesquisa semanal continua a mesma; referências históricas
-não são adicionadas ao boletim por e-mail nem apresentadas como novidades.
+No modo automático, o limite inicial é de **dois estudos principais**, **12
+candidatos por estudo** e **até duas referências anteriores por estudo**. No
+modo manual, o painel permite aprovar até seis estudos e escolher as referências
+diretamente nos exports; recomenda-se manter uma seleção curta para que o bloco
+de contexto permaneça legível. O total atual de estudos do podcast não muda. A
+pesquisa semanal continua a mesma; referências históricas não são adicionadas
+ao boletim por e-mail nem apresentadas como novidades.
 
 1. Depois da seleção dos estudos do podcast, consulta `ELink` com
    `linkname=pubmed_pubmed` e `cmd=neighbor_score`.
