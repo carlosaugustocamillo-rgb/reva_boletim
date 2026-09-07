@@ -16,8 +16,8 @@ O painel agora oferece um fluxo em duas etapas para o podcast:
    e-mail.
 2. Marque os artigos principais que realmente devem entrar no episódio.
 3. Para cada artigo aprovado, abra um grafo no Connected Papers usando esse
-   artigo como origem e exporte o resultado em **BibTeX**. É possível selecionar
-   vários arquivos `.bib` de uma vez; cada arquivo representa uma âncora.
+   artigo como origem e exporte o resultado em **BibTeX**. Use o botão do próprio
+   cartão do artigo para importar o arquivo; cada botão valida a âncora correta.
 4. Importe os arquivos no painel, marque os artigos relacionados que deseja usar
    como contexto e clique em **Preparar contexto selecionado**.
 5. Clique em **Executar selecionados** para gerar o roteiro. O contexto manual é
