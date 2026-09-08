@@ -1292,9 +1292,12 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     - Base the prompts strictly on the supplied theme, selected studies, and final newsletter text.
     - Avoid generic wellness visuals, random symbols, and concepts not present in the content.
     - Prefer concrete anatomy, physiology, movement, rehabilitation actions, daily habits, or evidence concepts explicitly present in the text.
-    - Visual style: premium editorial medical infographic, clean, minimal, white background, high contrast, lots of whitespace.
+    - Visual style for "ciencia" and "dicas": premium editorial medical infographic, clean, minimal, white background, high contrast, lots of whitespace.
     - The "abertura" image must work as a newsletter opening image and immediately communicate the actual clinical subject of the bulletin.
-    - The "abertura" image must be a simple subject image only: no explanation, no infographic layout, no multi-step sequence, no mechanism summary, no didactic labels.
+    - The "abertura" image must look like realistic editorial documentary photography from daily life: a patient in a believable real environment such as home, street, park, stairs, gym, pool, clinic corridor, or rehabilitation room, chosen according to the title.
+    - The "abertura" image should feel natural, human, candid, and lived-in, with available/natural light, realistic body posture, real clothing or rehab equipment, and environmental details that support the episode title.
+    - The "abertura" image must not be a sterile white-background medical illustration, conceptual 3D render, infographic, icon collage, staged corporate stock photo, or over-polished advertising image.
+    - The "abertura" image must be a simple real-world subject image only: no explanation, no infographic layout, no multi-step sequence, no mechanism summary, no didactic labels.
     - The "abertura" image must be composed as a wide horizontal banner in 16:9, with the subject centered and safe margins.
     - The "abertura" image must not look like a business meeting, office teamwork, corporate consulting, conference room, presentation deck, startup discussion, or generic lifestyle stock photo.
     - The "abertura" image should show a concrete patient/condition/exercise/rehabilitation scene consistent with the title and introduction.
@@ -1366,12 +1369,13 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
             "prompt_english": (
                 f"Create a simple photorealistic editorial opening image for the clinical topic '{tema}'. "
                 f"Newsletter title: '{titulo_boletim or tema}'. "
-                "Show only a concrete patient, body region, symptom, exercise, or rehabilitation scene directly about the subject. "
+                "Show a real patient in a believable daily-life setting directly connected to the subject, such as home, street, park, stairs, gym, pool, clinic corridor, or rehabilitation room. "
+                "Use natural available light, realistic clothing, natural posture, and subtle environmental context; make it feel candid, humane, and lived-in. "
                 "Do not explain the article content, do not summarize mechanisms, and do not create an infographic. "
                 "Compose the scene as a wide horizontal banner (16:9) with the main subject centered and comfortable safe margins. "
-                "The image must feel like healthcare education, not corporate lifestyle. "
+                "The image must feel like a real healthcare education story, not corporate lifestyle or glossy advertising. "
                 "No office meeting, no business discussion, no conference room, no people around a boardroom table, no startup scene, no generic teamwork. "
-                "No text, no labels, no charts. White or very clean background, premium composition, human-centered, medically coherent."
+                "No text, no labels, no charts, no icons, no sterile white-background illustration. Premium composition, human-centered, medically coherent."
             )
         },
         "ciencia": {
