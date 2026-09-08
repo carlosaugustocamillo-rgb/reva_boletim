@@ -6,7 +6,7 @@ import json
 import html
 import re
 from io import BytesIO
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dotenv import load_dotenv
 import google.generativeai as genai
 from openai import OpenAI
@@ -1408,6 +1408,21 @@ def _extract_calendar_title(row):
     return row.get("Title", row.get("Theme", "")).strip()
 
 
+def _parse_calendar_date(row):
+    raw_date = str(row.get("Date", "")).strip()
+    if not raw_date:
+        return None
+
+    try:
+        return date.fromisoformat(raw_date)
+    except ValueError:
+        return None
+
+
+def _today_for_calendar():
+    return datetime.now(pytz.timezone("America/Sao_Paulo")).date()
+
+
 def _resolve_instagram_format(row=None):
     if not isinstance(row, dict):
         return "Carrossel"
@@ -1458,10 +1473,23 @@ def _coerce_completed_indices(state_data, rows):
     return completed
 
 
-def _compute_next_pending_index(rows, completed_indices):
+def _compute_next_pending_index(rows, completed_indices, today=None):
+    today = today or _today_for_calendar()
+
+    for idx, row in enumerate(rows):
+        row_date = _parse_calendar_date(row)
+        if (
+            _extract_calendar_title(row)
+            and idx not in completed_indices
+            and row_date
+            and row_date >= today
+        ):
+            return idx
+
     for idx, row in enumerate(rows):
         if _extract_calendar_title(row) and idx not in completed_indices:
             return idx
+
     return len(rows)
 
 
