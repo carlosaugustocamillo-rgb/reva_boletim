@@ -13,10 +13,11 @@ from simple_agent import run_agent, AgentInput
 from pydantic import BaseModel, Field
 import firebase_admin
 from firebase_admin import credentials, storage
-from datetime import datetime
+from datetime import date, datetime
 import re
 from elevenlabs_utils import diagnosticar_erro_elevenlabs
 from connected_papers import build_manual_report, parse_bibtex
+from pubmed_related import PubMedRelatedClient, RelatedConfig, prefilter
 
 def simple_slugify(text):
     text = text.lower().strip()
@@ -65,6 +66,10 @@ class ConnectedPapersImportInput(BaseModel):
 class ManualPodcastContextInput(BaseModel):
     main_articles: list[dict] = Field(default_factory=list)
     selected_by_anchor: dict[str, list[dict]] = Field(default_factory=dict)
+
+
+class PubMedSimilarInput(BaseModel):
+    article: dict = Field(default_factory=dict)
 
 
 # Force rebuild for Python 3.11
@@ -482,6 +487,43 @@ def preparar_contexto_manual(payload: ManualPodcastContextInput):
     if not payload.main_articles:
         return JSONResponse(status_code=400, content={"error": "Selecione ao menos um artigo principal."})
     return build_manual_report(payload.main_articles, payload.selected_by_anchor)
+
+
+@app.post("/buscar-similares-pubmed")
+def buscar_similares_pubmed(payload: PubMedSimilarInput):
+    """Busca similares no PubMed sob demanda, para substituir um grafo indisponível."""
+    article = payload.article or {}
+    pmid = str(article.get("pmid", "")).strip()
+    if not re.fullmatch(r"\d+", pmid):
+        return JSONResponse(status_code=400, content={"error": "O artigo precisa ter um PMID válido."})
+
+    cache_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "cache", "pubmed_related")
+    pubmed = PubMedRelatedClient(
+        cache_dir,
+        email=os.environ.get("ENTREZ_EMAIL", ""),
+        api_key=os.environ.get("NCBI_API_KEY"),
+        config=RelatedConfig.from_env(),
+    )
+    try:
+        candidates, cached = pubmed.candidates(pmid)
+        eligible, rejected = prefilter(candidates, article, set(), date.today())
+        return {
+            "versao": 1,
+            "fonte": "PubMed Similar Articles (fallback manual)",
+            "ancora": article,
+            "candidatos": eligible,
+            "excluidos": rejected,
+            "cache": cached,
+            "total_candidatos": len(eligible),
+            "mensagem": (
+                "Nenhum similar anterior com resumo disponível foi encontrado."
+                if not eligible else "Selecione manualmente os artigos que deseja usar como contexto."
+            ),
+        }
+    except Exception as error:
+        return JSONResponse(status_code=502, content={"error": f"PubMed indisponível: {type(error).__name__}."})
+    finally:
+        pubmed.session.close()
 
 class RevaMaisInput(BaseModel):
     tema: str = ""

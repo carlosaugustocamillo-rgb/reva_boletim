@@ -18,9 +18,12 @@ O painel agora oferece um fluxo em duas etapas para o podcast:
 3. Para cada artigo aprovado, abra um grafo no Connected Papers usando esse
    artigo como origem e exporte o resultado em **BibTeX**. Use o botão do próprio
    cartão do artigo para importar o arquivo; cada botão valida a âncora correta.
-4. Importe os arquivos no painel, marque os artigos relacionados que deseja usar
-   como contexto e clique em **Preparar contexto selecionado**.
-5. Clique em **Executar selecionados** para gerar o roteiro. O contexto manual é
+4. Se o Connected Papers não encontrar resultados, use **Buscar similares no
+   PubMed** no mesmo cartão. Essa consulta é sob demanda e retorna somente
+   candidatos anteriores com resumo para seleção manual.
+5. Marque os artigos relacionados que deseja usar como contexto e clique em
+   **Preparar contexto selecionado**.
+6. Clique em **Executar selecionados** para gerar o roteiro. O contexto manual é
    usado somente no podcast; o boletim e o e-mail não recebem esses artigos.
 
 O exportador trata a primeira entrada BibTeX como âncora e as demais como
@@ -38,6 +41,8 @@ Endpoints usados pelo painel:
 - `POST /preparar-contexto-manual`: recebe `main_articles` e
   `selected_by_anchor`, produzindo o mesmo contrato de contexto usado pelo
   roteirista.
+- `POST /buscar-similares-pubmed`: recebe um artigo com PMID e consulta o
+  endpoint de artigos semelhantes do PubMed para uso manual, sem triagem de IA.
 - `POST /iniciar-boletim`: aceita `somente_curadoria=true`,
   `artigos_podcast_aprovados` e `contexto_pubmed_manual` no JSON da execução.
 
