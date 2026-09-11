@@ -34,6 +34,11 @@ editorial e deve ser conferida antes da geração do áudio. Se um arquivo tiver
 uma âncora diferente do artigo aprovado, suas referências não serão anexadas a
 esse estudo; gere o grafo novamente para a âncora correta.
 
+As consultas do podcast são separadas das consultas do boletim detalhado: elas
+mantêm o tema e o exercício/reabilitação, mas não restringem o tipo de estudo.
+Isso permite revisar estudos observacionais, qualitativos, coortes e outros
+desenhos sem alterar o conteúdo do e-mail.
+
 Endpoints usados pelo painel:
 
 - `POST /importar-connected-papers`: recebe `{content, filename}` e retorna a

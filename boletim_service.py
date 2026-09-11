@@ -1324,6 +1324,16 @@ CONSULTAS_DETALHADAS = {
     )
 }
 
+# Busca exclusiva do podcast, sem filtro por tipo de publicação. As consultas
+# detalhadas acima continuam restritas para preservar o conteúdo do e-mail.
+CONSULTAS_PODCAST = {
+    "DPOC": '(("Pulmonary Disease, Chronic Obstructive"[Mesh] OR COPD[tiab] OR "chronic obstructive pulmonary disease"[tiab]) AND ("pulmonary rehabilitation"[tiab] OR Exercise[tiab]) AND humans[Mesh])',
+    "Doenças Intersticiais": '(("Lung Diseases, Interstitial"[Mesh] OR "interstitial lung disease"[tiab] OR "interstitial lung diseases"[tiab] OR ILD[tiab]) AND ("pulmonary rehabilitation"[tiab] OR Exercise[tiab]) AND humans[Mesh])',
+    "Asma": '(("Asthma"[Mesh] OR asthma[tiab]) AND ("pulmonary rehabilitation"[tiab] OR Exercise[tiab]) AND humans[Mesh])',
+    "Fibrose Cística": '(("Cystic Fibrosis"[Mesh] OR "cystic fibrosis"[tiab]) AND ("pulmonary rehabilitation"[tiab] OR Exercise[tiab]) AND humans[Mesh])',
+    "Câncer": '(("Neoplasms"[Mesh] OR cancer[tiab] OR cancers[tiab]) AND (exercise[tiab] OR "pulmonary rehabilitation"[tiab]) AND humans[Mesh])',
+}
+
 
 # ======================================================================
 # MAILCHIMP – TEMPLATE HTML BASE
@@ -1602,7 +1612,49 @@ def rodar_boletim(opcoes=None):
         # --- ROTEIRO (Parte do passo de texto, mas opcional) ---
         if opcoes.get('roteiro'):
             yield "📝 Gerando Roteiros de Podcast..."
-            
+
+            # As consultas do boletim detalhado preservam seus filtros
+            # editoriais históricos. Para o podcast, fazemos uma busca adicional
+            # sem filtro por desenho, permitindo que a curadoria manual analise
+            # observacionais, qualitativos, coortes e outros estudos.
+            consultas_podcast = globals().get('CONSULTAS_PODCAST', {})
+            if consultas_podcast:
+                yield "🔎 Ampliando busca do podcast para todos os desenhos de estudo..."
+                for tema, query in consultas_podcast.items():
+                    yield f"   - Buscando candidatos adicionais para '{tema}'..."
+                    ids_podcast = buscar_ids(query)
+                    artigos_podcast_ampliados = buscar_info_estruturada(ids_podcast)
+                    artigos_ampliados_relevantes = [
+                        art for art in artigos_podcast_ampliados
+                        if artigo_tem_exercicio_no_resumo(art)
+                    ]
+                    for art in artigos_ampliados_relevantes:
+                        pmid = str(art.get('pmid', '')).strip()
+                        if not pmid or pmid in artigos_vistos_podcast:
+                            continue
+                        resumo_original = art.get('resumo_original', '').strip()
+                        if not resumo_original:
+                            continue
+                        try:
+                            resumo_traduzido = traduzir_resumo(resumo_original)
+                        except Exception as error:
+                            print(f"⚠️ Falha ao traduzir candidato adicional PMID {pmid}: {error}")
+                            continue
+                        artigos_vistos_podcast.add(pmid)
+                        autores = art.get('autores', [])
+                        todos_artigos_relevantes.append({
+                            'pmid': pmid,
+                            'doi': art.get('doi', ''),
+                            'autores': autores,
+                            'journal': art.get('journal', ''),
+                            'data_publicacao': art.get('data_publicacao', ''),
+                            'titulo': art.get('titulo', ''),
+                            'resumo_traduzido': resumo_traduzido,
+                            'primeiro_autor': autores[0] if autores else "Autor não identificado",
+                            'tipos': art.get('tipos', []),
+                            'resumo_original': resumo_original,
+                        })
+
             # A curadoria manual deve exibir todos os artigos relevantes que
             # tenham resumo traduzido, independentemente do desenho do estudo.
             # O limite de seis é aplicado apenas ao episódio final.
