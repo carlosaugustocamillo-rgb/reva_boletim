@@ -1603,43 +1603,17 @@ def rodar_boletim(opcoes=None):
         if opcoes.get('roteiro'):
             yield "📝 Gerando Roteiros de Podcast..."
             
-            # Filtra para o Podcast: Apenas RCT, Systematic Review, Meta-Analysis, Guidelines
-            # E que tenham resumo traduzido disponível
-            tipos_podcast = [
-                'Randomized Controlled Trial', 
-                'Systematic Review', 
-                'Meta-Analysis', 
-                'Practice Guideline',
-                'Guideline',
-                'Clinical Trial',
-                'Review',
-                'Observational Study',
-                'Comparative Study'
+            # A curadoria manual deve exibir todos os artigos relevantes que
+            # tenham resumo traduzido, independentemente do desenho do estudo.
+            # O limite de seis é aplicado apenas ao episódio final.
+            artigos_podcast = [
+                art for art in todos_artigos_relevantes
+                if art.get('resumo_traduzido')
             ]
-            
-            artigos_podcast = []
-            for art in todos_artigos_relevantes:
-                if not art.get('resumo_traduzido'): continue
-                
-                # Verifica se tem algum dos tipos aceitos NOS METADADOS
-                tipos_artigo = art.get('tipos', [])
-                eh_alta_evidencia = any(t in tipos_artigo for t in tipos_podcast)
-                
-                # FALLBACK: Se não achou nos metadados (comum em artigos muito recentes),
-                # procura palavras-chave no TÍTULO ou RESUMO ORIGINAL
-                if not eh_alta_evidencia:
-                    texto_completo = (art.get('titulo', '') + ' ' + art.get('resumo_original', '')).lower()
-                    termos_chave = [
-                        'randomized', 'randomised', 'controlled trial', 
-                        'systematic review', 'meta-analysis', 'guideline',
-                        'consensus', 'position statement'
-                    ]
-                    eh_alta_evidencia = any(termo in texto_completo for termo in termos_chave)
-                
-                if eh_alta_evidencia:
-                    artigos_podcast.append(art)
-            
-            # Ordenação Inteligente por Nível de Evidência
+
+            # Ordena por nível de evidência apenas como sugestão visual; não é
+            # um filtro de inclusão e não impede a análise de observacionais,
+            # qualitativos, protocolos ou outros desenhos.
             def get_evidence_score(art):
                 tipos = [t.lower() for t in art.get('tipos', [])]
                 texto = (art.get('titulo', '') + ' ' + art.get('resumo_original', '')).lower()
@@ -1661,14 +1635,26 @@ def rodar_boletim(opcoes=None):
                 
                 return 0
 
-            # Ordena: Maior score primeiro. Desempate pela ordem original (que é data descrescente no PubMed)
+            # Maior score primeiro; o desempate mantém a ordem original do PubMed.
             artigos_podcast.sort(key=get_evidence_score, reverse=True)
 
             # LIMITA A 6 ESTUDOS (aprox 20-25 min de áudio)
             LIMIT_PODCAST = 6
             artigos_cortados = []
-            
-            if len(artigos_podcast) > LIMIT_PODCAST:
+
+            # Na etapa somente_curadoria, todos os artigos ficam disponíveis
+            # para análise. Na execução final sem aprovação manual, preserva-se
+            # o limite histórico de seis estudos.
+            artigos_para_curadoria = list(artigos_podcast)
+            approved_pmids = {str(item).strip() for item in opcoes.get('artigos_podcast_aprovados', []) if str(item).strip()}
+            if approved_pmids:
+                # A aprovação manual deve poder escolher qualquer candidato da
+                # lista completa, não apenas os seis primeiros sugeridos.
+                artigos_podcast = [
+                    art for art in artigos_para_curadoria
+                    if str(art.get('pmid', '')).strip() in approved_pmids
+                ]
+            if not opcoes.get('somente_curadoria') and len(artigos_podcast) > LIMIT_PODCAST:
                 artigos_cortados = artigos_podcast[LIMIT_PODCAST:]
                 artigos_podcast = artigos_podcast[:LIMIT_PODCAST]
 
@@ -1677,8 +1663,8 @@ def rodar_boletim(opcoes=None):
             print("🎙️ RELATÓRIO DE CURADORIA DO PODCAST")
             print("="*50)
             
-            print(f"\n✅ SELECIONADOS ({len(artigos_podcast)}):")
-            for art in artigos_podcast:
+            print(f"\n✅ CANDIDATOS PARA REVISÃO ({len(artigos_para_curadoria)}):")
+            for art in artigos_para_curadoria:
                 tipos = ", ".join(art.get('tipos', [])[:2]) # Mostra só os 2 primeiros tipos
                 print(f"   - {art.get('titulo', '')[:80]}... [{tipos}]")
                 
@@ -1688,20 +1674,18 @@ def rodar_boletim(opcoes=None):
                     tipos = ", ".join(art.get('tipos', [])[:2])
                     print(f"   - {art.get('titulo', '')[:80]}... [{tipos}]")
             
-            ignored_count = len(todos_artigos_relevantes) - len(artigos_podcast) - len(artigos_cortados)
-            print(f"\n⚠️ IGNORADOS (Baixa evidência/Outros): {ignored_count} estudos.")
+            ignored_count = len(todos_artigos_relevantes) - len(artigos_para_curadoria)
+            print(f"\n⚠️ SEM RESUMO TRADUZIDO: {ignored_count} estudos.")
             print("="*50 + "\n")
 
-            # FALLBACK DE SEGURANÇA: Se não sobrou nada (muito restrito), pega os top 3 gerais
-            if not artigos_podcast and todos_artigos_relevantes:
-                print("⚠️ Nenhum estudo de alta evidência encontrado. Usando fallback (Top 3 gerais).")
-                artigos_podcast = todos_artigos_relevantes[:3]
+            # A etapa de curadoria devolve a lista completa; a execução final
+            # usa até seis aprovados, sem fallback por desenho de estudo.
+            if opcoes.get('somente_curadoria'):
+                artigos_podcast = artigos_para_curadoria
 
             roteiros_audio = []
             titulos_podcast = []
-            approved_pmids = {str(item).strip() for item in opcoes.get('artigos_podcast_aprovados', []) if str(item).strip()}
             if approved_pmids:
-                artigos_podcast = [art for art in artigos_podcast if str(art.get('pmid', '')).strip() in approved_pmids]
                 yield f"✅ Curadoria manual: {len(artigos_podcast)} estudo(s) principal(is) aprovado(s)."
 
             if opcoes.get('somente_curadoria'):
