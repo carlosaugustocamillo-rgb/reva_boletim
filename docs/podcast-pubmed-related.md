@@ -12,8 +12,8 @@ BibTeX é feita manualmente na conta do usuário.
 O painel agora oferece um fluxo em duas etapas para o podcast:
 
 1. Clique em **Sugerir artigos para revisar**. O pipeline faz a seleção semanal
-   normal e devolve no máximo seis estudos candidatos, sem gerar áudio nem enviar
-   e-mail.
+   normal e devolve todos os estudos com resumo traduzido para revisão, sem gerar
+   áudio nem enviar e-mail.
 2. Marque os artigos principais que realmente devem entrar no episódio.
 3. Para cada artigo aprovado, abra um grafo no Connected Papers usando esse
    artigo como origem e exporte o resultado em **BibTeX**. Use o botão do próprio
