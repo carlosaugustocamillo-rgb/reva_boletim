@@ -115,6 +115,12 @@ class EditorialTest(unittest.TestCase):
             with self.assertRaises(editorial.EditorialError):
                 editorial.validate_plan(plan, self.draft['evidence'])
 
+    def test_pdf_layout_artifacts_do_not_reject_literal_support(self):
+        plan = copy.deepcopy(self.draft['plan'])
+        original = plan['studies'][0]['supports'][0]['quote']
+        plan['studies'][0]['supports'][0]['quote'] = original.replace('participants', 'partici-\npants')
+        editorial.validate_plan(plan, self.draft['evidence'])
+
     def test_omitted_duplicate_and_reordered_studies_rejected(self):
         packet = editorial.evidence_packet([ANCHOR, {**ANCHOR, 'pmid': '101'}], None)
         for ids in (['100'], ['100', '100'], ['101', '100']):

@@ -56,6 +56,19 @@ def _clean(value):
     return " ".join(str(value or "").split())
 
 
+def _quote_key(value):
+    """Normalize PDF extraction artifacts while preserving the quoted words.
+
+    PDF text commonly inserts line breaks in the middle of a sentence (and
+    hyphenates a word at the page margin).  Those are layout artifacts, not a
+    reason to reject an otherwise literal, source-bound citation.
+    """
+    text = unicodedata.normalize("NFC", str(value or "")).replace("\u00ad", "")
+    text = re.sub(r"(?<=\w)[-\u2010\u2011]\s+(?=\w)", "", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip().casefold()
+
+
 def _source_keys(value):
     return {
         _clean(value.get(key)).casefold()
@@ -169,7 +182,7 @@ def validate_plan(plan, packet):
             for support in supports:
                 source = sources.get(support.get("source_id"))
                 quote = _clean(support.get("quote"))
-                if not source or not quote or quote not in source["content"]:
+                if not source or not quote or _quote_key(quote) not in _quote_key(source["content"]):
                     raise EditorialError("Trecho de apoio ausente do PDF/resumo indicado.")
         check_support(study["supports"])
         if f'{study["pmid"]}:main' not in {s["source_id"] for s in study["supports"]}:
