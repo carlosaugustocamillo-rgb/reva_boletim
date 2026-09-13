@@ -18,6 +18,7 @@ import re
 from elevenlabs_utils import diagnosticar_erro_elevenlabs
 from connected_papers import build_manual_report, parse_bibtex
 from pubmed_related import PubMedRelatedClient, RelatedConfig, prefilter
+import podcast_editorial
 
 def simple_slugify(text):
     text = text.lower().strip()
@@ -456,6 +457,8 @@ def iniciar_boletim(
     opcoes['somente_curadoria'] = bool(body.get('somente_curadoria'))
     opcoes['artigos_podcast_aprovados'] = body.get('artigos_podcast_aprovados') or []
     opcoes['contexto_pubmed_manual'] = body.get('contexto_pubmed_manual')
+    opcoes['roteiro_aprovado_id'] = body.get('roteiro_aprovado_id')
+    opcoes['roteiro_aprovado_sha256'] = body.get('roteiro_aprovado_sha256')
     
     # Cria o arquivo inicial
     save_task(task_id, {"status": "queued", "logs": ["⏳ Iniciando..."], "result": None})
@@ -710,8 +713,18 @@ async def status_boletim(task_id: str):
 
 @app.get("/ultimo-roteiro")
 async def get_ultimo_roteiro():
-    """Retorna o JSON do último roteiro gerado para inspeção."""
-    roteiro_dir = os.path.join("data", "roteiros")
+    """Readable canonical episode first; legacy JSON remains available for old editions."""
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    editorial_dir = os.path.join(base_dir, "editorial")
+    if os.path.isdir(editorial_dir):
+        drafts = [name for name in os.listdir(editorial_dir) if re.fullmatch(r"[a-f0-9]{32}\.json", name)]
+        if drafts:
+            # UUIDs are not chronological; approval updates must not make old drafts "latest".
+            records = [podcast_editorial.load_draft(base_dir, name[:-5]) for name in drafts]
+            draft = max(records, key=lambda item: item['created_at'])
+            return {"arquivo": f"{draft['id']}.json", "conteudo": podcast_editorial.dialogues(draft),
+                    "editorial": podcast_editorial.review_payload(draft)}
+    roteiro_dir = os.path.join(base_dir, "roteiros")
     if not os.path.exists(roteiro_dir):
         return {"error": "Pasta de roteiros não encontrada."}
     
@@ -724,6 +737,52 @@ async def get_ultimo_roteiro():
         conteudo = json.load(f)
         
     return {"arquivo": arquivos[0], "conteudo": conteudo}
+
+
+@app.get("/podcast-roteiro/{draft_id}")
+def get_podcast_draft(draft_id: str):
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    try:
+        return podcast_editorial.review_payload(podcast_editorial.load_draft(base_dir, draft_id))
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Roteiro não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+
+
+@app.post("/podcast-roteiro/{draft_id}/aprovar")
+def approve_podcast_draft(draft_id: str, payload: dict):
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    try:
+        draft = podcast_editorial.approve_draft(base_dir, draft_id, payload.get("sha256"))
+        return podcast_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Roteiro não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.get("/podcast-roteiro/{draft_id}/texto")
+def download_podcast_script(draft_id: str):
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    try:
+        draft = podcast_editorial.load_draft(base_dir, draft_id)
+        return Response(content=podcast_editorial.transcript(draft), media_type="text/plain; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="roteiro-{draft_id}.txt"'})
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Roteiro não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+
+
+@app.get("/baixar-audio-podcast/{filename}")
+def download_podcast_preview(filename: str):
+    if not re.fullmatch(r"episodio_boletim_\d{4}-\d{2}-\d{2}(?:_\d+)?\.mp3", filename):
+        return JSONResponse(status_code=400, content={"error": "Nome de áudio inválido."})
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "audios", filename)
+    if not os.path.isfile(path):
+        return JSONResponse(status_code=404, content={"error": "Áudio não encontrado."})
+    return FileResponse(path=path, filename=filename, media_type="audio/mpeg")
 
 
 @app.get("/baixar-brief/{data_ref}")

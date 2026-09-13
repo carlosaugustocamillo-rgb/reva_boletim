@@ -11,6 +11,7 @@ import json
 import os
 import re
 import tempfile
+import subprocess
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
@@ -21,6 +22,8 @@ from unittest.mock import MagicMock, patch
 import pytz
 
 import pubmed_related
+import podcast_editorial
+from test_podcast_editorial import editorial_response
 from test_pubmed_related import ANCHOR, candidate, decision, llm
 
 
@@ -50,11 +53,17 @@ def load_functions(filename, namespace, source=None):
 def run_pipeline(base_dir, *, related=True, script=True, source=None):
     anchor = {**ANCHOR, "journal": "Clinical Exercise Journal", "ano": "2026", "volume": "1", "issue": "2", "paginas": "10-20"}
     client = llm([decision()])
+    screening_response = client.with_options.return_value.chat.completions.create.return_value
+    def respond(**kwargs):
+        if kwargs.get('response_format', {}).get('json_schema', {}).get('name', '').startswith('podcast_'):
+            return editorial_response(**kwargs)
+        return screening_response
+    client.with_options.return_value.chat.completions.create.side_effect = respond
     dialogue = [{"speaker": "HOST", "text": "Estudo de Silva A. Contexto: Jones B, 2025."}]
     client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=json.dumps(dialogue)))])
     mailchimp = MagicMock()
     mailchimp.campaigns.create.return_value = {"id": "test-campaign"}
-    namespace = {"__file__": str(ROOT / "boletim_service.py"), "os": os, "json": json,
+    namespace = {"__file__": str(ROOT / "boletim_service.py"), "os": os, "json": json, "podcast_editorial": podcast_editorial,
                  "re": re, "copy": copy, "datetime": FixedDatetime, "timedelta": timedelta,
                  "pytz": pytz, "BASE_DIR": str(base_dir), "AUDIO_DIR": str(Path(base_dir) / "audios"),
                  "client": client, "mc": mailchimp, "MC_LIST_ID": "test-list", "MC_FROM_NAME": "Test",
@@ -75,7 +84,7 @@ def run_pipeline(base_dir, *, related=True, script=True, source=None):
     with patch("pubmed_related.PubMedRelatedClient", return_value=pubmed), patch.dict(os.environ, {"PODCAST_PUBMED_RELATED_ENABLED": "true"}), redirect_stdout(io.StringIO()):
         messages = list(namespace["rodar_boletim"](options))
     return {"result": messages[-1], "messages": messages, "pubmed": pubmed, "client": client,
-            "mailchimp": mailchimp, "search": search, "translate": translate}
+            "mailchimp": mailchimp, "search": search, "translate": translate, "namespace": namespace}
 
 
 class PodcastPubmedIntegrationTest(unittest.TestCase):
@@ -104,14 +113,87 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         self.assertIsNone(run["result"]["referencias_pubmed"])
         self.assertFalse((self.root / "referencias").exists())
 
+    def test_email_is_byte_identical_to_committed_pipeline(self):
+        baseline = subprocess.run(['git', 'show', 'HEAD:boletim_service.py'], cwd=ROOT,
+                                  check=True, capture_output=True, text=True).stdout
+        before = run_pipeline(self.root / 'before', source=baseline)
+        after = run_pipeline(self.root / 'after')
+        for filename in ('boletim_pubmed_2026-09-04.txt', 'boletim_detalhado_2026-09-04.txt', 'boletim_para_revisao_2026-09-04.txt'):
+            self.assertEqual((self.root / 'before' / filename).read_bytes(), (self.root / 'after' / filename).read_bytes())
+        for method in ('create', 'set_content', 'schedule'):
+            self.assertEqual(getattr(before['mailchimp'].campaigns, method).call_args_list,
+                             getattr(after['mailchimp'].campaigns, method).call_args_list)
+
+    def test_editorial_failure_preserves_email_and_never_calls_tts(self):
+        with patch.object(podcast_editorial, 'generate_episode_steps', side_effect=ValueError('Source validation failed')):
+            run = run_pipeline(self.root)
+        self.assertIn('Source validation failed', run['result']['roteiro_erro'])
+        self.assertIsNone(run['result']['roteiro_editorial'])
+        run['mailchimp'].campaigns.schedule.assert_called_once()
+
+    def test_audio_requires_approval_and_narrates_exact_saved_text_without_new_llm_calls(self):
+        import uuid
+        from test_podcast_voice_settings import load_voice_config
+        run = run_pipeline(self.root)
+        ns = run['namespace']
+        review = run['result']['roteiro_editorial']
+        ns.update(load_voice_config())
+        ns.update({'uuid': uuid, 'DATA_DIR': str(self.root), 'INTRO_PATH': str(self.root / 'no-intro.mp3'),
+                   'formatar_erro_elevenlabs': str})
+        segment = MagicMock()
+        segment.__add__.return_value = segment
+        segment.__iadd__.return_value = segment
+        segment.export.side_effect = lambda path, **kw: Path(path).write_bytes(b'test-mp3')
+        audio = MagicMock()
+        audio.empty.return_value = audio.silent.return_value = audio.from_file.return_value = segment
+        ns['AudioSegment'] = audio
+        synth = ns['elevenlabs_client'].text_to_speech.convert
+        synth.return_value = [b'test-mp3']
+        options = {'resumos': False, 'roteiro': False, 'audio': True, 'mailchimp': False, 'firebase': False,
+                   'roteiro_aprovado_id': review['id'], 'roteiro_aprovado_sha256': review['sha256']}
+        with redirect_stdout(io.StringIO()):
+            rejected = list(ns['rodar_boletim'](options))[-1]
+        self.assertIsNotNone(rejected['audio_erro'])
+        synth.assert_not_called()
+        approved = podcast_editorial.approve_draft(self.root, review['id'], review['sha256'])
+        run['client'].reset_mock()
+        run['mailchimp'].reset_mock()
+        with redirect_stdout(io.StringIO()):
+            result = list(ns['rodar_boletim'](options))[-1]
+        expected = [turn['text'] for block in podcast_editorial.dialogues(approved) for turn in block]
+        self.assertEqual([call.kwargs['text'] for call in synth.call_args_list], expected)
+        self.assertIsNotNone(result['audio_download_url'])
+        self.assertIsNone(result['audio_erro'])
+        run['client'].with_options.assert_not_called()
+        run['mailchimp'].campaigns.create.assert_not_called()
+        self.assertFalse(options['resumos'])
+
+        # Failure in one block must not create a second, incomplete final episode.
+        synth.reset_mock()
+        synth.side_effect = [RuntimeError('Synthetic TTS failure')] + [[b'test-mp3']] * 8
+        with redirect_stdout(io.StringIO()):
+            partial = list(ns['rodar_boletim'](options))[-1]
+        self.assertIsNotNone(partial['audio_erro'])
+        self.assertIsNone(partial['audio_download_url'])
+
+    def test_new_draft_does_not_run_legacy_transition_rewriters(self):
+        source = (ROOT / 'boletim_service.py').read_text()
+        tree = ast.parse(source)
+        pipeline = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'rodar_boletim')
+        called = {n.func.id for n in ast.walk(pipeline) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
+        self.assertTrue({'resumo_para_podcast', 'revisar_roteiro_completo_para_podcast',
+                         'suavizar_frases_mecanicas', 'forcar_transicoes_ancoradas_no_proximo_titulo'}.isdisjoint(called))
+
     def test_metadata_reaches_screening_and_only_script_gets_context(self):
         run = run_pipeline(self.root)
-        screening = run["client"].with_options.return_value.chat.completions.create.call_args.kwargs
+        calls = run["client"].with_options.return_value.chat.completions.create.call_args_list
+        screening = next(call.kwargs for call in calls if not call.kwargs.get('response_format', {}).get('json_schema', {}).get('name', '').startswith('podcast_'))
         source = json.loads(screening["messages"][1]["content"])
         self.assertEqual(source["ancora"]["pmid"], "100")
         self.assertEqual(source["ancora"]["doi"], "10.123/new")
-        script_prompt = run["client"].chat.completions.create.call_args.kwargs["messages"][1]["content"]
-        self.assertIn("Primeiro autor: Silva A", script_prompt)
+        writing = next(call.kwargs for call in calls if call.kwargs.get('response_format', {}).get('json_schema', {}).get('name') == 'podcast_write')
+        script_prompt = writing["messages"][1]["content"]
+        self.assertIn("Silva A", script_prompt)
         self.assertIn("Earlier exercise trial 200", script_prompt)
         campaign_html = run["mailchimp"].campaigns.set_content.call_args.args[1]["html"]
         self.assertNotIn("Earlier exercise trial 200", campaign_html)

@@ -39,6 +39,7 @@ from pydub import AudioSegment
 from mailchimp_marketing import Client
 from mailchimp_marketing.api_client import ApiClientError
 from dotenv import load_dotenv
+import podcast_editorial
 from pubmed_related import (
     publication_date, enabled_from_env, enrich_episode, context_for_script,
     references_for_notes, save_json,
@@ -116,10 +117,21 @@ def _int_env(name, default=None):
         return default
 
 
+def _float_env(name, default, minimum=0.0, maximum=1.0):
+    import math
+
+    raw = os.environ.get(name)
+    value = float(raw) if raw not in (None, "") else default
+    if not math.isfinite(value) or not minimum <= value <= maximum:
+        raise ValueError(f"{name} deve estar entre {minimum} e {maximum}.")
+    return value
+
+
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
-ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "tnSpp4vdxKPjI9w0GnoV")
-ELEVEN_AUDIO_DIALOGUE_ENABLED = _bool_env("ELEVEN_AUDIO_DIALOGUE_ENABLED", True)
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST") or "L0Dsvb3SLTyegXwtm47J"
+ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST") or "uYXf8XasLslADfZ2MB4u"
+ELEVEN_AUDIO_MODEL = os.environ.get("ELEVEN_AUDIO_MODEL") or "eleven_multilingual_v2"
+ELEVEN_AUDIO_DIALOGUE_ENABLED = _bool_env("ELEVEN_AUDIO_DIALOGUE_ENABLED", False)
 ELEVEN_AUDIO_DIALOGUE_MODEL = os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v3")
 ELEVEN_AUDIO_FALLBACK_MODEL = os.environ.get("ELEVEN_AUDIO_FALLBACK_MODEL", "eleven_multilingual_v2")
 ELEVEN_AUDIO_LANGUAGE_CODE = os.environ.get("ELEVEN_AUDIO_LANGUAGE_CODE", "pt")
@@ -131,6 +143,50 @@ if ELEVENLABS_API_KEY:
     print(f"✅ ElevenLabs configurado com vozes:")
     print(f"   HOST: {ELEVEN_VOICE_ID_HOST}")
     print(f"   COHOST: {ELEVEN_VOICE_ID_COHOST}")
+
+
+def usar_dialogo_eleven_v3():
+    # Uma flag legada no Railway não pode substituir o modelo escolhido.
+    return ELEVEN_AUDIO_MODEL == "eleven_v3" and ELEVEN_AUDIO_DIALOGUE_ENABLED
+
+
+def parametros_tts_podcast(speaker):
+    """Mesmos parâmetros de voz na abertura, estudos e encerramento falado."""
+    speaker = str(speaker).strip().upper()
+    if speaker not in {"HOST", "COHOST"}:
+        raise ValueError(f"Apresentador inválido: {speaker}")
+
+    model_id = (
+        ELEVEN_AUDIO_FALLBACK_MODEL
+        if ELEVEN_AUDIO_MODEL == "eleven_v3"
+        else ELEVEN_AUDIO_MODEL
+    )
+    params = {
+        "voice_id": ELEVEN_VOICE_ID_HOST if speaker == "HOST" else ELEVEN_VOICE_ID_COHOST,
+        "model_id": model_id,
+        "output_format": "mp3_44100_128",
+        "voice_settings": VoiceSettings(
+            speed=_float_env(f"ELEVEN_VOICE_SPEED_{speaker}", 1.1, 0.7, 1.2),
+            stability=_float_env("ELEVEN_VOICE_STABILITY", 1.0),
+            similarity_boost=_float_env("ELEVEN_VOICE_SIMILARITY_BOOST", 1.0),
+            style=_float_env("ELEVEN_VOICE_STYLE", 0.0),
+            use_speaker_boost=True,
+        ),
+    }
+    # A API v2 detecta o idioma pelo texto e não suporta language_code.
+    # Não enviar um override que seria ignorado/rejeitado pelo provedor.
+    if model_id != "eleven_multilingual_v2" and ELEVEN_AUDIO_LANGUAGE_CODE:
+        params["language_code"] = ELEVEN_AUDIO_LANGUAGE_CODE
+    return params
+
+
+def gerar_fala_com_elevenlabs(texto, speaker):
+    if not elevenlabs_client:
+        raise ValueError("Sem chave ElevenLabs configurada.")
+    return elevenlabs_client.text_to_speech.convert(
+        text=texto,
+        **parametros_tts_podcast(speaker),
+    )
 
 
 # ======================================================================
@@ -999,13 +1055,8 @@ def preparar_texto_para_audio(texto, speaker="HOST"):
     if not txt:
         return ""
 
-    # Transicoes longas, especialmente quando carregam titulo em ingles,
-    # soam artificiais e quebram o fluxo no TTS.
-    if (_eh_fala_transicao(txt) or _eh_transicao_mecanica(txt)) and (":" in txt or len(txt) > 90):
-        return _encurtar_transicao_para_audio(txt)
-
     substituicoes = [
-        (r"\b6MWD\b", "teste de caminhada de seis minutos"),
+        (r"\b6MWD\b", "distância percorrida em seis minutos"),
         (r"\b6MWT\b", "teste de caminhada de seis minutos"),
         (r"\bRCT\b", "ensaio clinico randomizado"),
         (r"\brandomised controlled trial\b", "ensaio clinico randomizado"),
@@ -1061,14 +1112,16 @@ def _agrupar_dialogo_para_v3(dialogo, limite_chars=1800):
     return grupos
 
 
-def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None):
+def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_texto=False):
     """
     Usa o endpoint Text to Dialogue do Eleven v3.
     """
+    if not usar_dialogo_eleven_v3():
+        raise ValueError("Eleven v3 não é o modo de áudio selecionado para o podcast.")
     if not ELEVENLABS_API_KEY:
         raise ValueError("Sem chave ElevenLabs configurada.")
 
-    dialogo_audio = normalizar_dialogo_para_audio(dialogo)
+    dialogo_audio = dialogo if preservar_texto else normalizar_dialogo_para_audio(dialogo)
     if not dialogo_audio:
         raise ValueError("Dialogo vazio para audio.")
 
@@ -1414,6 +1467,7 @@ def rodar_boletim(opcoes=None):
             'firebase': True
         }
 
+    opcoes = dict(opcoes)  # Do not mutate caller options during the approval gate.
     yield f"🚀 Iniciando pipeline com opções: {opcoes}"
 
     hoje = datetime.today().strftime('%Y-%m-%d')
@@ -1445,6 +1499,10 @@ def rodar_boletim(opcoes=None):
     total_chars_elevenlabs = 0
     contexto_pubmed_report = None
     referencias_pubmed_salvas = False
+    editorial_draft = None
+    editorial_error = None
+    audio_error = None
+    audio_canonico = False
     
     # ------------------------------------------------------------------
     # 1) BOLETIM PRINCIPAL & DETALHADO (RESUMOS)
@@ -1764,7 +1822,7 @@ def rodar_boletim(opcoes=None):
                 if contexto_manual:
                     contexto_pubmed_report = contexto_manual
                     referencias_ativas = True
-                    yield "📚 Usando referências selecionadas manualmente no Connected Papers."
+                    yield "📚 Usando referências selecionadas na curadoria manual."
                 elif referencias_ativas:
                     yield "🔗 Buscando contexto científico anterior no PubMed (somente podcast)..."
                 if not contexto_manual:
@@ -1772,13 +1830,10 @@ def rodar_boletim(opcoes=None):
                         artigos_podcast, BASE_DIR, client, enabled=referencias_ativas,
                         today=datetime.now(pytz.timezone("America/Sao_Paulo")).date(),
                     )
-                contexto_por_pmid = {
-                    item['pmid_ancora']: item for item in contexto_pubmed_report['estudos']
-                }
                 if referencias_ativas:
                     total_referencias = sum(len(item['referencias']) for item in contexto_pubmed_report['estudos'])
                     if contexto_manual:
-                        yield f"🔗 Contexto Connected Papers: {total_referencias} referência(s) selecionada(s) manualmente."
+                        yield f"🔗 Contexto manual: {total_referencias} referência(s) selecionada(s)."
                     else:
                         yield f"🔗 Contexto PubMed: {total_referencias} referência(s) admitida(s) pela triagem automática."
                     try:
@@ -1787,106 +1842,90 @@ def rodar_boletim(opcoes=None):
                         yield "📚 Referências e decisões da triagem salvas para revisão editorial."
                     except OSError:
                         yield "⚠️ Não foi possível salvar o relatório de referências do podcast."
-                yield f"🎙️ Gerando roteiro para {len(artigos_podcast)} estudos selecionados..."
-                
-                for idx, art in enumerate(artigos_podcast):
-                    is_last = (idx == len(artigos_podcast) - 1)
-                    yield f"   - Roteirizando estudo {idx+1}/{len(artigos_podcast)}: {art.get('titulo', 'Sem título')[:30]}..."
-                    
-                    autores_list = art.get('autores', [])
-                    primeiro_autor = autores_list[0] if autores_list else art.get('primeiro_autor', 'Autor desconhecido')
-                    
-                    dialogo = resumo_para_podcast(
-                        titulo=art.get('titulo', 'Sem título'),
-                        resumo_pt=art.get('resumo_traduzido', ''),
-                        primeiro_autor=primeiro_autor,
-                        idx=idx,
-                        is_last=is_last,
-                        contexto_pubmed=contexto_por_pmid.get(str(art.get('pmid', ''))),
-                        data_estudo=art.get('data_publicacao', ''),
+                yield "🎙️ Planejamento global → conversa completa → checagem das fontes (somente podcast)."
+                try:
+                    editorial_draft = yield from podcast_editorial.generate_episode_steps(
+                        artigos_podcast, contexto_pubmed_report, client,
                     )
-                    roteiros_audio.append(normalizar_dialogo(dialogo))
-                    titulos_podcast.append(art.get('titulo', f'Estudo {idx+1}'))
+                    podcast_editorial.save_draft(BASE_DIR, editorial_draft)
+                    roteiros_audio = podcast_editorial.dialogues(editorial_draft)
+                    titulos_podcast = ["Abertura", *(a.get('titulo', '') for a in artigos_podcast), "Encerramento"]
+                    audio_canonico = True
+                    yield "📄 Roteiro e parecer científico prontos para leitura e aprovação antes do áudio."
+                except Exception as error:
+                    # The podcast must not prevent delivery of the unchanged email.
+                    editorial_error = f"{type(error).__name__}: {error}"
+                    editorial_draft = None
+                    yield f"⚠️ Roteiro não liberado: {editorial_error}"
+                if opcoes.get('audio'):
+                    yield "⏸️ Áudio adiado: revise e aprove a versão do roteiro exibida no painel."
+                opcoes['audio'] = False
 
-            # Guarda versão da etapa 8 (antes da revisão de fluidez)
+            # Even an empty selection must never fall back to an old approved episode.
+            opcoes['audio'] = False
+
+            # The global writer already reviews against sources. Legacy title-only
+            # review and deterministic transition replacement must never run here.
             roteiros_audio_original = copy.deepcopy(roteiros_audio)
 
-            # ------------------------------------------------------------------
-            # 8.5) REVISÃO DE FLUIDEZ DO ROTEIRO (GEMINI/OPENAI)
-            # ------------------------------------------------------------------
-            if roteiros_audio and opcoes.get('revisao_roteiro', True):
-                yield "🧠 2.5/5: Revisando roteiro COMPLETO para soar mais podcast..."
-                roteiros_audio = revisar_roteiro_completo_para_podcast(
-                    roteiros_audio=roteiros_audio,
-                    titulos_estudos=titulos_podcast
+            if roteiros_audio:
+                # Salva TXT original (etapa 8) e revisado (etapa 8.5)
+                roteiro_original_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_original.txt")
+                roteiro_revisado_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_5_revisado.txt")
+
+                salvar_roteiro_txt(
+                    caminho=roteiro_original_txt,
+                    roteiros_audio=roteiros_audio_original,
+                    titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8 - ORIGINAL)"
                 )
-                yield "🧹 Suavizando frases mecânicas residuais..."
-                roteiros_audio = suavizar_frases_mecanicas(roteiros_audio)
-                yield "🧭 Ajustando transições orgânicas entre estudos..."
-                roteiros_audio = forcar_transicoes_ancoradas_no_proximo_titulo(
+                salvar_roteiro_txt(
+                    caminho=roteiro_revisado_txt,
                     roteiros_audio=roteiros_audio,
-                    titulos_estudos=titulos_podcast
+                    titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8.5 - REVISADO)"
                 )
-            elif roteiros_audio:
-                yield "⏭️ Etapa 8.5 desativada (usando roteiro bruto da etapa 8)."
 
-            # Salva TXT original (etapa 8) e revisado (etapa 8.5)
-            roteiro_original_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_original.txt")
-            roteiro_revisado_txt = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}_etapa8_5_revisado.txt")
+                # Mantém compatibilidade: arquivo "roteiro_path" sempre recebe a versão revisada (8.5)
+                salvar_roteiro_txt(
+                    caminho=roteiro_path,
+                    roteiros_audio=roteiros_audio,
+                    titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly"
+                )
+                print(f"✅ Roteiro etapa 8 salvo em: {roteiro_original_txt}")
+                print(f"✅ Roteiro etapa 8.5 salvo em: {roteiro_revisado_txt}")
+                print(f"✅ Roteiro ativo para áudio salvo em: {roteiro_path}")
 
-            salvar_roteiro_txt(
-                caminho=roteiro_original_txt,
-                roteiros_audio=roteiros_audio_original,
-                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8 - ORIGINAL)"
-            )
-            salvar_roteiro_txt(
-                caminho=roteiro_revisado_txt,
-                roteiros_audio=roteiros_audio,
-                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly (ETAPA 8.5 - REVISADO)"
-            )
+                # Salva também em JSON estruturado (etapa 8, etapa 8.5 e alias compatível)
+                roteiro_json_dir = os.path.join(BASE_DIR, "roteiros")
+                roteiro_json_path = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}.json")
+                roteiro_json_etapa8 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8.json")
+                roteiro_json_etapa85 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8_5.json")
+                try:
+                    os.makedirs(roteiro_json_dir, exist_ok=True)
+                    with open(roteiro_json_etapa8, "w", encoding="utf-8") as f:
+                        json.dump(roteiros_audio_original, f, indent=2, ensure_ascii=False)
+                    with open(roteiro_json_etapa85, "w", encoding="utf-8") as f:
+                        json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
+                    with open(roteiro_json_path, "w", encoding="utf-8") as f:
+                        json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
 
-            # Mantém compatibilidade: arquivo "roteiro_path" sempre recebe a versão revisada (8.5)
-            salvar_roteiro_txt(
-                caminho=roteiro_path,
-                roteiros_audio=roteiros_audio,
-                titulo="ROTEIRO COMPLETO DO PODCAST - RevaCast Weekly"
-            )
-            print(f"✅ Roteiro etapa 8 salvo em: {roteiro_original_txt}")
-            print(f"✅ Roteiro etapa 8.5 salvo em: {roteiro_revisado_txt}")
-            print(f"✅ Roteiro ativo para áudio salvo em: {roteiro_path}")
-            
-            # Salva também em JSON estruturado (etapa 8, etapa 8.5 e alias compatível)
-            roteiro_json_dir = os.path.join(BASE_DIR, "roteiros")
-            roteiro_json_path = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}.json")
-            roteiro_json_etapa8 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8.json")
-            roteiro_json_etapa85 = os.path.join(roteiro_json_dir, f"roteiro_estruturado_{hoje}_etapa8_5.json")
-            try:
-                os.makedirs(roteiro_json_dir, exist_ok=True)
-                with open(roteiro_json_etapa8, "w", encoding="utf-8") as f:
-                    json.dump(roteiros_audio_original, f, indent=2, ensure_ascii=False)
-                with open(roteiro_json_etapa85, "w", encoding="utf-8") as f:
-                    json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
-                with open(roteiro_json_path, "w", encoding="utf-8") as f:
-                    json.dump(roteiros_audio, f, indent=2, ensure_ascii=False)
+                    print(f"✅ Roteiro JSON etapa 8 salvo em: {roteiro_json_etapa8}")
+                    print(f"✅ Roteiro JSON etapa 8.5 salvo em: {roteiro_json_etapa85}")
+                    print(f"✅ Roteiro JSON ativo salvo em: {roteiro_json_path}")
 
-                print(f"✅ Roteiro JSON etapa 8 salvo em: {roteiro_json_etapa8}")
-                print(f"✅ Roteiro JSON etapa 8.5 salvo em: {roteiro_json_etapa85}")
-                print(f"✅ Roteiro JSON ativo salvo em: {roteiro_json_path}")
-                
-                # Upload para Firestore se habilitado
-                if opcoes.get('firebase'):
-                    from firebase_service import save_firestore_document
-                    doc_data = {
-                        "date": hoje,
-                        "script": roteiros_audio,
-                        "script_original": roteiros_audio_original,
-                        "contexto_pubmed": contexto_pubmed_report,
-                        "created_at": datetime.now().isoformat()
-                    }
-                    save_firestore_document("roteiros", f"roteiro_{hoje}", doc_data)
-                    
-            except Exception as e:
-                print(f"❌ Erro ao salvar JSON do roteiro: {e}")
+                    # Upload para Firestore se habilitado
+                    if opcoes.get('firebase'):
+                        from firebase_service import save_firestore_document
+                        doc_data = {
+                            "date": hoje,
+                            "script": roteiros_audio,
+                            "script_original": roteiros_audio_original,
+                            "contexto_pubmed": contexto_pubmed_report,
+                            "created_at": datetime.now().isoformat()
+                        }
+                        save_firestore_document("roteiros", f"roteiro_{hoje}", doc_data)
+
+                except Exception as e:
+                    print(f"❌ Erro ao salvar JSON do roteiro: {e}")
 
             if roteiros_audio and opcoes.get('brief_spotify', True):
                 yield "🧾 2.8/5: Gerando brief do episódio para Spotify..."
@@ -1913,13 +1952,19 @@ def rodar_boletim(opcoes=None):
 
     else:
         yield "⏭️ Pulando busca e geração de Resumos (usando arquivos existentes se houver)."
-        # Tenta carregar roteiro existente se necessário para o áudio
-        if opcoes.get('audio') and os.path.exists(roteiro_path):
-             # Lógica simplificada: ler o roteiro do arquivo seria complexo de parsear de volta para JSON.
-             # Por enquanto, assumimos que se pulou resumos, não tem roteiro em memória.
-             # Se o usuário quiser gerar áudio sem gerar roteiro, precisaria carregar do disco.
-             # Para simplificar: Se pulou resumos/roteiro, não gera áudio NOVO, apenas usa existente.
-             pass
+
+    if opcoes.get('audio'):
+        # Audio-only requests must identify the exact version the user reviewed.
+        try:
+            editorial_draft = podcast_editorial.approved_audio(
+                BASE_DIR, opcoes.get('roteiro_aprovado_id'), opcoes.get('roteiro_aprovado_sha256'),
+            )
+            roteiros_audio = podcast_editorial.dialogues(editorial_draft)
+            audio_canonico = True
+        except (ValueError, FileNotFoundError) as error:
+            audio_error = f"Revise e aprove o roteiro antes do áudio. {error}"
+            yield f"⚠️ {audio_error}"
+            opcoes['audio'] = False
 
     # ------------------------------------------------------------------
     # 3) GERAÇÃO DO ÁUDIO
@@ -1940,88 +1985,29 @@ def rodar_boletim(opcoes=None):
              
         elif roteiros_audio:
             yield "🎙️ Gerando Áudio (ElevenLabs)..."
+            yield f"   - Modelo selecionado: {ELEVEN_AUDIO_MODEL}."
+            if not usar_dialogo_eleven_v3():
+                for speaker, nome in (("HOST", "Ivo"), ("COHOST", "Manu")):
+                    params_voz = parametros_tts_podcast(speaker)
+                    settings_voz = params_voz["voice_settings"]
+                    yield (
+                        f"   - {nome}: {params_voz['voice_id']} | {params_voz['model_id']} | "
+                        f"velocidade {settings_voz.speed} | estabilidade {settings_voz.stability:.0%} | "
+                        f"similaridade {settings_voz.similarity_boost:.0%} | estilo {settings_voz.style:.0%}."
+                    )
+                if params_voz["model_id"] == "eleven_multilingual_v2" and ELEVEN_AUDIO_LANGUAGE_CODE:
+                    yield (
+                        f"ℹ️ Idioma solicitado: {ELEVEN_AUDIO_LANGUAGE_CODE}. O Multilingual v2 "
+                        "detecta o idioma pelo texto; a API não aceita substituição explícita de idioma."
+                    )
             audio_paths = []
             erros_audio = []
             estudos_audio_gerados = 0
             
-            # --- GERAÇÃO DA ABERTURA FALADA (IVO E MANU) ---
-            import random
-            yield "   - Gerando apresentação dos hosts..."
-            
-            POOL_ABERTURAS = [
-                # Opção 1 (Sugerida)
-                [
-                    {"speaker": "HOST", "text": "Olááá! Sejam muito bem-vindos a mais um episódio do RevaCast Weekly. Eu sou o Ivo..."},
-                    {"speaker": "COHOST", "text": "E eu sou a Manu."},
-                    {"speaker": "HOST", "text": "Juntos a gente dá uma passeada na literatura científica da última semana. Bora lá, Manu?"},
-                    {"speaker": "COHOST", "text": "Bora!"}
-                ],
-                # Opção 2 (Mais direta)
-                [
-                    {"speaker": "HOST", "text": "Fala pessoal! Começando mais uma edição do RevaCast Weekly, o seu resumo de ciência. Aqui é o Ivo."},
-                    {"speaker": "COHOST", "text": "E aqui é a Manu. Tudo pronto para as atualizações desta semana."},
-                    {"speaker": "HOST", "text": "Exato. Separamos os artigos mais importantes para discutir. Vamos nessa?"},
-                    {"speaker": "COHOST", "text": "Com certeza, vamos lá!"}
-                ],
-                # Opção 3 (Mais energética)
-                [
-                    {"speaker": "HOST", "text": "Sejam bem-vindos ao RevaCast Weekly! Eu sou o Ivo e já estou com os estudos na mão."},
-                    {"speaker": "COHOST", "text": "Oi gente, eu sou a Manu! Vamos descomplicar as evidências da semana?"},
-                    {"speaker": "HOST", "text": "É isso aí. Sem enrolação, vamos ver o que saiu de novo."},
-                    {"speaker": "COHOST", "text": "Partiu!"}
-                ]
-            ]
-            
-            abertura_escolhida = random.choice(POOL_ABERTURAS)
-            audios_abertura_temp = []
-            path_abertura_final = os.path.join(AUDIO_DIR, f"intro_falada_{hoje}.mp3")
-            
-            try:
-                usou_dialogue_v3 = False
+            # Abertura e encerramento já pertencem à versão aprovada.
+            # Nenhuma fala aleatória é acrescentada nesta etapa.
+            yield "   - Sintetizando exatamente o roteiro aprovado, incluindo a abertura."
 
-                if ELEVEN_AUDIO_DIALOGUE_ENABLED:
-                    try:
-                        gerar_dialogo_com_eleven_v3(
-                            abertura_escolhida,
-                            path_abertura_final,
-                            seed=ELEVEN_AUDIO_DIALOGUE_SEED,
-                        )
-                        usou_dialogue_v3 = True
-                    except Exception as e_v3_intro:
-                        print(f"⚠️ Eleven v3 na abertura falhou, usando fallback: {formatar_erro_elevenlabs(e_v3_intro)}")
-
-                if not usou_dialogue_v3:
-                    for idx_intro, fala in enumerate(normalizar_dialogo_para_audio(abertura_escolhida)):
-                        voice_id = ELEVEN_VOICE_ID_HOST if fala['speaker'] == 'HOST' else ELEVEN_VOICE_ID_COHOST
-                        audio_gen = elevenlabs_client.text_to_speech.convert(
-                            voice_id=voice_id,
-                            text=fala['text'],
-                            model_id=ELEVEN_AUDIO_FALLBACK_MODEL,
-                            voice_settings=VoiceSettings(
-                                stability=0.75,
-                                similarity_boost=0.75,
-                                style=0.0,
-                                use_speaker_boost=True,
-                            )
-                        )
-                        path_intro = os.path.join(AUDIO_DIR, f"temp_intro_{idx_intro}.mp3")
-                        with open(path_intro, "wb") as f:
-                            for chunk in audio_gen:
-                                f.write(chunk)
-                        audios_abertura_temp.append(path_intro)
-
-                    abertura_combinada = AudioSegment.empty()
-                    for p in audios_abertura_temp:
-                        abertura_combinada += AudioSegment.from_file(p) + AudioSegment.silent(duration=300)
-                    abertura_combinada.export(path_abertura_final, format="mp3")
-
-            except Exception as e:
-                erro_formatado = formatar_erro_elevenlabs(e)
-                erros_audio.append(erro_formatado)
-                print(f"Erro ao gerar abertura: {erro_formatado}")
-
-            # --- FIM DA ABERTURA ---
-            
             # Gera ID único para essa execução para não misturar arquivos temp
             run_id = str(uuid.uuid4())[:8]
             
@@ -2033,11 +2019,6 @@ def rodar_boletim(opcoes=None):
                     yield "⚠️ Erro ao ler roteiro JSON (formato inválido)."
                     return
             
-            # Adiciona o caminho da abertura NA LISTA DE CAMINHOS se existir
-            # Adiciona o caminho da abertura NA LISTA DE CAMINHOS se existir
-            if path_abertura_final and os.path.exists(path_abertura_final):
-                audio_paths.append(path_abertura_final)
-
             for estudo_idx, dialogo in enumerate(roteiros_audio):
                 if not isinstance(dialogo, list): continue
                 
@@ -2049,15 +2030,16 @@ def rodar_boletim(opcoes=None):
                 try:
                     if not elevenlabs_client: raise ValueError("Sem chave ElevenLabs")
 
-                    dialogo_audio = normalizar_dialogo_para_audio(dialogo)
+                    dialogo_audio = dialogo if audio_canonico else normalizar_dialogo_para_audio(dialogo)
                     total_chars_elevenlabs += sum(len(fala.get("text", "")) for fala in dialogo_audio)
 
                     usou_dialogue_v3 = False
-                    if ELEVEN_AUDIO_DIALOGUE_ENABLED:
+                    if usar_dialogo_eleven_v3():
                         try:
                             caminho_gerado, _ = gerar_dialogo_com_eleven_v3(
                                 dialogo_audio,
                                 caminho_estudo,
+                                preservar_texto=audio_canonico,
                                 seed=(
                                     ELEVEN_AUDIO_DIALOGUE_SEED + estudo_idx
                                     if ELEVEN_AUDIO_DIALOGUE_SEED is not None
@@ -2110,21 +2092,7 @@ def rodar_boletim(opcoes=None):
                         # DEBUG: Ver quem está falando
                         print(f"   [FALA {fala_idx+1}] Speaker JSON: '{fala.get('speaker')}' -> Clean: '{speaker_clean}'")
                         
-                        voice_id = ELEVEN_VOICE_ID_HOST if speaker_clean == 'HOST' else ELEVEN_VOICE_ID_COHOST
-                        
-                        # Configurações ajustadas para fala mais rápida/dinâmica
-                        audio_generator = elevenlabs_client.text_to_speech.convert(
-                            voice_id=voice_id,
-                            text=text,
-                            model_id=ELEVEN_AUDIO_FALLBACK_MODEL,
-                            output_format="mp3_44100_128",
-                            voice_settings=VoiceSettings(
-                                stability=0.50,       # "More Emotion" setting
-                                similarity_boost=0.75, 
-                                style=0.20,           # "With Style" setting approved by user
-                                use_speaker_boost=True
-                            )
-                        )
+                        audio_generator = gerar_fala_com_elevenlabs(text, speaker_clean)
                         
                         segmento_path = os.path.join(DATA_DIR, "audios", f"temp_{run_id}_e{estudo_idx}_f{fala_idx}.mp3")
                         # Assuming 'save' is a function that writes the audio generator to a file
@@ -2168,11 +2136,12 @@ def rodar_boletim(opcoes=None):
                     print(f"Erro audio: {erro_formatado}")
 
             # Intro e mixagem final
-            if estudos_audio_gerados == 0:
+            if estudos_audio_gerados != len(roteiros_audio) or erros_audio:
                 # Nunca publique um episodio composto apenas pela abertura.
                 audio_paths = []
                 detalhe = erros_audio[0] if erros_audio else "Nenhum estudo produziu um segmento de audio valido."
-                yield f"❌ Áudio não gerado: {detalhe}"
+                audio_error = detalhe
+                yield f"❌ Áudio incompleto; episódio não será publicado: {detalhe}"
             elif audio_paths:
                 if erros_audio:
                     yield f"⚠️ Áudio parcial: {estudos_audio_gerados} estudo(s) gerado(s); {len(erros_audio)} falharam."
@@ -2196,7 +2165,7 @@ def rodar_boletim(opcoes=None):
                             segmento = AudioSegment.from_file(caminho, format="mp3")
                             episodio += segmento + AudioSegment.silent(duration=2500)
                         except Exception as e_seg:
-                            print(f"⚠️ Erro ao adicionar segmento {caminho}: {e_seg}")
+                            raise RuntimeError(f"Falha de mixagem; episódio incompleto não será publicado: {caminho}") from e_seg
                     
                     episodio.export(episodio_path, format="mp3")
                     print(f"🎧 Episódio salvo: {episodio_path}")
@@ -2363,7 +2332,8 @@ def rodar_boletim(opcoes=None):
     
     # Estimativa de tokens (muito aproximada, pois não pegamos o usage exato de cada call no código atual sem refatorar tudo)
     # Assumindo média de 3000 tokens input / 1000 tokens output para todo o fluxo de texto (OpenAI + Gemini)
-    custo_texto_estimado = 0.15 # $0.15 fixo como "teto" para texto (GPT-4o + Gemini)
+    custo_texto_estimado = 0.15  # Legacy estimate for summaries/brief only; excludes editorial LLM.
+    tokens_editoriais = editorial_draft.get("usage", []) if editorial_draft else []
     
     # ElevenLabs é o mais caro e mensurável por caracteres
     custo_audio_estimado = (total_chars_elevenlabs / 1000) * 0.30 # $0.30 por 1k chars (exemplo, ajuste conforme seu plano)
@@ -2383,14 +2353,20 @@ def rodar_boletim(opcoes=None):
         "referencias_pubmed_path": referencias_pubmed_path if referencias_pubmed_salvas else None,
         "referencias_pubmed_download_url": f"/baixar-referencias-podcast/{hoje}" if referencias_pubmed_salvas else None,
         "referencias_pubmed": contexto_pubmed_report,
+        "roteiro_editorial": podcast_editorial.review_payload(editorial_draft) if editorial_draft else None,
+        "roteiro_erro": editorial_error,
+        "audio_erro": audio_error,
+        "audio_download_url": f"/baixar-audio-podcast/{episodio_filename}" if os.path.isfile(episodio_path) else None,
         "audio_url": audio_url,
         "rss_url": rss_url,
         "mailchimp": {"status": mailchimp_status, "error": mailchimp_error},
         "custos": {
             "elevenlabs_chars": total_chars_elevenlabs,
+            "podcast_texto_tokens": tokens_editoriais,
+            "estimativa_inclui_roteiro_editorial": False,
             "estimativa_usd": round(custo_total, 2),
             "estimativa_brl": round(custo_brl, 2),
-            "detalhe": f"Texto: ~$0.15 | Áudio: ~${custo_audio_estimado:.2f} ({total_chars_elevenlabs} chars)"
+            "detalhe": f"Resumos/brief: ~$0.15 | Áudio: ~${custo_audio_estimado:.2f} ({total_chars_elevenlabs} chars). Roteiro editorial não incluído; veja tokens reais."
         }
     }
 
