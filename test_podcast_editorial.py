@@ -74,6 +74,61 @@ class EditorialTest(unittest.TestCase):
             draft = editorial.generate_episode([ANCHOR], self.context, fake_client())
         self.assertEqual(draft['model'], 'gpt-5.5')
 
+    def test_manual_edit_roundtrip_preserves_speech_and_requires_new_approval(self):
+        editorial.save_draft(self.root, self.draft)
+        editorial.approve_draft(self.root, self.draft['id'], self.draft['sha256'])
+        text = 'Ivo: Essa melhora resolve tudo?\n\nManu: Ainda não.\nPrecisamos discutir os limites.'
+        edited = editorial.save_edited_draft(self.root, self.draft['id'], self.draft['sha256'], text)
+        self.assertNotEqual(edited['id'], self.draft['id'])
+        self.assertEqual(editorial.transcript(edited), text)
+        self.assertFalse(editorial.review_payload(edited)['can_approve'])
+        with self.assertRaises(editorial.EditorialError):
+            editorial.approve_draft(self.root, edited['id'], edited['sha256'])
+        audited = editorial.audit_edited_draft(self.root, edited['id'], fake_client())
+        self.assertEqual(audited['status'], 'pending_review')
+        with self.assertRaises(editorial.EditorialError):
+            editorial.approve_draft(self.root, edited['id'], edited['sha256'])
+        editorial.approve_draft(self.root, audited['id'], audited['sha256'])
+        audio = editorial.approved_audio(self.root, audited['id'], audited['sha256'])
+        self.assertEqual(editorial.transcript(audio), text)
+        self.assertEqual(editorial.dialogues(audio)[0][1]['text'], 'Ainda não.\nPrecisamos discutir os limites.')
+        self.assertEqual(editorial.load_draft(self.root, self.draft['id'])['status'], 'approved')
+
+    def test_manual_parser_accepts_chatgpt_labels_and_rejects_invalid_speakers(self):
+        turns = editorial.parse_edited_transcript('**Ivo:** Olá.\n\n**Manu:** Vamos conversar.', 1)
+        self.assertEqual(turns[0], {'speaker': 'HOST', 'text': 'Olá.'})
+        for text in ('Título\nIvo: Olá.\nManu: Oi.', 'Ivo: Só eu.',
+                     'Ivo:\nManu: Oi.', 'Ivo: Olá.\nCarlos: Oi.\nManu: Sim.',
+                     'Ivo: ' + 'palavra ' * 800 + '\nManu: Oi.', None):
+            with self.subTest(text=str(text)[:40]), self.assertRaises(editorial.EditorialError):
+                editorial.parse_edited_transcript(text, 1)
+
+    def test_manual_audit_failure_keeps_saved_text_blocked_and_original_untouched(self):
+        editorial.save_draft(self.root, self.draft)
+        with self.assertRaises(editorial.EditorialError):
+            editorial.save_edited_draft(self.root, self.draft['id'], 'stale', 'Ivo: Oi.\nManu: Oi.')
+        edited = editorial.save_edited_draft(self.root, self.draft['id'], self.draft['sha256'], 'Ivo: Oi.\nManu: Oi.')
+        with patch.object(editorial, '_request', side_effect=TimeoutError('unavailable')):
+            editorial.audit_edited_draft(self.root, edited['id'], fake_client())
+        saved = editorial.load_draft(self.root, edited['id'])
+        self.assertEqual(saved['status'], 'blocked')
+        self.assertEqual(editorial.transcript(saved), 'Ivo: Oi.\n\nManu: Oi.')
+        self.assertEqual(editorial.load_draft(self.root, self.draft['id']), self.draft)
+        with self.assertRaises(editorial.EditorialError):
+            editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+
+    def test_manual_scientific_issue_blocks_approval_without_rewriting(self):
+        editorial.save_draft(self.root, self.draft)
+        edited = editorial.save_edited_draft(self.root, self.draft['id'], self.draft['sha256'], 'Ivo: Cura comprovada.\nManu: Sempre.')
+        audit = {'issues': [{'severity': 'blocking', 'location': 'Fala 1', 'reason': 'Conclusão não sustentada.'}]}
+        with patch.object(editorial, '_request', return_value=audit) as request:
+            saved = editorial.audit_edited_draft(self.root, edited['id'], fake_client())
+        self.assertEqual(request.call_args.args[2], 'audit')
+        self.assertEqual(saved['status'], 'blocked')
+        self.assertEqual(editorial.transcript(saved), editorial.transcript(edited))
+        with self.assertRaises(editorial.EditorialError):
+            editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+
     def test_metadata_only_not_promoted_to_source_and_manual_mode_preserved(self):
         self.context['estudos'][0]['referencias'][0]['resumo_original'] = ''
         packet = editorial.evidence_packet([ANCHOR], self.context)

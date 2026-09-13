@@ -791,6 +791,20 @@ def approve_podcast_draft(draft_id: str, payload: dict):
         return JSONResponse(status_code=409, content={"error": str(error)})
 
 
+@app.post("/podcast-roteiro/{draft_id}/editar")
+def edit_podcast_draft(draft_id: str, payload: dict, background_tasks: BackgroundTasks):
+    from boletim_service import client
+    base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+    try:
+        draft = podcast_editorial.save_edited_draft(base_dir, draft_id, payload.get("sha256"), payload.get("text"))
+        background_tasks.add_task(podcast_editorial.audit_edited_draft, base_dir, draft["id"], client)
+        return podcast_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Roteiro não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
 @app.get("/podcast-roteiro/{draft_id}/texto")
 def download_podcast_script(draft_id: str):
     base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")

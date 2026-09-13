@@ -227,6 +227,8 @@ def validate_script(script, packet):
 
 def dialogues(draft):
     script = draft["script"]
+    if "edited_dialogue" in script:
+        return [[{"speaker": t["speaker"], "text": t["text"]} for t in script["edited_dialogue"]]]
     blocks = [script["opening"], *(s["dialogue"] for s in script["studies"]), script["closing"]]
     return [[{"speaker": t["speaker"], "text": t["text"]} for t in block] for block in blocks]
 
@@ -317,6 +319,65 @@ def load_draft(base_dir, draft_id):
     draft = json.loads(draft_path(base_dir, draft_id).read_text(encoding="utf-8"))
     if draft["sha256"] != fingerprint(draft):
         raise EditorialError("Roteiro alterado após a revisão; gere uma nova versão.")
+    return draft
+
+
+def parse_edited_transcript(text, study_count):
+    """Parse speaker labels locally. Never ask a model to rewrite edited speech."""
+    if not isinstance(text, str) or not text.strip() or len(text) > 60000:
+        raise EditorialError("Cole um roteiro com até 60.000 caracteres, usando Ivo: e Manu:.")
+    # Also accept the bold labels commonly copied from ChatGPT.
+    label = re.compile(r"^[ \t]*(?:\*\*)?(Ivo|Manu)(?:\*\*)?:[ \t]*(?:\*\*)?[ \t]*", re.I | re.M)
+    matches = list(label.finditer(text))
+    if not matches or text[:matches[0].start()].strip():
+        raise EditorialError("Comece cada fala em uma nova linha com Ivo: ou Manu:, sem título antes das falas.")
+    turns = []
+    for i, match in enumerate(matches):
+        speech = text[match.end():matches[i + 1].start() if i + 1 < len(matches) else len(text)].strip()
+        if not speech:
+            raise EditorialError(f"A fala {i + 1} está vazia.")
+        if re.search(r"(?m)^\s*(?:\*\*)?[\wÀ-ÿ ]{1,40}(?:\*\*)?:", speech):
+            raise EditorialError("Use apenas Ivo: e Manu: como nomes dos locutores.")
+        turns.append({"speaker": "HOST" if match.group(1).casefold() == "ivo" else "COHOST", "text": speech})
+    if {t["speaker"] for t in turns} != {"HOST", "COHOST"}:
+        raise EditorialError("O roteiro precisa ter falas de Ivo e Manu.")
+    if sum(len(t["text"].split()) for t in turns) > 350 + 420 * study_count:
+        raise EditorialError("Roteiro excede o limite de duração; reduza o texto antes de salvar.")
+    return turns
+
+
+def save_edited_draft(base_dir, draft_id, sha256, text):
+    previous = load_draft(base_dir, draft_id)
+    if previous["sha256"] != sha256:
+        raise EditorialError("A versão mudou. Recarregue o roteiro antes de salvar a edição.")
+    turns = parse_edited_transcript(text, len(previous["evidence"]))
+    draft = {"id": uuid.uuid4().hex, "version": VERSION, "model": previous["model"],
+             "created_at": datetime.now(timezone.utc).isoformat(), "status": "auditing",
+             "parent_id": previous["id"], "parent_sha256": previous["sha256"],
+             "evidence": previous["evidence"], "plan": previous["plan"],
+             "script": {"title": previous["script"]["title"], "edited_dialogue": turns},
+             "audit": {"issues": [{"severity": "blocking", "location": "Texto editado",
+                                   "reason": "Aguardando nova conferência científica do texto editado."}]},
+             "usage": []}
+    draft["sha256"] = fingerprint(draft)
+    save_draft(base_dir, draft)
+    return draft
+
+
+def audit_edited_draft(base_dir, draft_id, client):
+    draft = load_draft(base_dir, draft_id)
+    if draft["status"] != "auditing":
+        return draft
+    try:
+        draft["audit"] = _request(client, draft["model"], "audit", AUDIT_SCHEMA,
+                                  {"evidence": draft["evidence"], "plan": draft["plan"],
+                                   "script": draft["script"]}, draft["usage"])
+    except Exception as error:
+        draft["audit"] = {"issues": [{"severity": "blocking", "location": "Conferência do texto editado",
+                                      "reason": f"Não foi possível concluir a checagem. Texto salvo. {type(error).__name__}"}]}
+    draft["status"] = "blocked" if any(i["severity"] == "blocking" for i in draft["audit"]["issues"]) else "pending_review"
+    draft["sha256"] = fingerprint(draft)
+    save_draft(base_dir, draft)
     return draft
 
 

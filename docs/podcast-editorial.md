@@ -113,15 +113,28 @@ registrado e continuam bloqueando a aprovação.
    Mesmo com áudio marcado, um **novo** roteiro aguarda aprovação.
 3. Ler a conversa e abrir “Parecer científico e fontes por estudo”; baixar TXT se
    desejar. “Revisar último roteiro” recupera a versão persistida após recarregar.
-4. Marcar a confirmação de leitura e clicar em “Aprovar e gerar prévia de áudio”.
-   Essa ação não refaz busca/roteiro, não envia e-mail e não publica no RSS.
-5. Ouvir o arquivo em “Baixar prévia de áudio”. O piloto de conteúdo com dois
-   artigos reais deve ser revisado antes de publicação/deploy definitivo.
+4. Para revisar fora do painel, usar “Copiar roteiro” e depois “Editar / colar texto
+   revisado”. Cada fala começa em nova linha com `Ivo:` ou `Manu:`; rótulos em
+   negrito copiados do ChatGPT também são aceitos. Colar apenas as falas completas.
+5. “Salvar e conferir texto” cria outro UUID, preserva o original e inicia somente
+   a auditoria das fontes em segundo plano. O painel acompanha essa conferência.
+   A auditoria usa créditos de texto, mas não reescreve falas. PDF e resumos já
+   persistidos continuam disponíveis; não é preciso reenviá-los.
+6. Ler o novo parecer, confirmar a leitura e clicar em “Aprovar, gerar e publicar
+   áudio”. Essa ação usa o texto salvo, sem nova escrita, e publica no Firebase/RSS.
 
-Não há editor manual de falas nesta versão. Havendo erro científico bloqueante,
-conferir/ajustar as fontes e gerar um novo rascunho para revisão. Não foi acrescentada
-publicação automática da prévia. Os controles de publicação existentes permanecem
-separados; não iniciar outra síntese paga sem intenção explícita.
+A edição usa `script.edited_dialogue`, uma lista ordenada de falas. A associação
+das afirmações aos estudos e a presença das ressalvas são verificadas pela auditoria
+contra todas as fontes e a pauta original; a edição pode reorganizar os estudos.
+O parecer da pauta é apresentado como planejado, e as observações da checagem
+automática são refeitas para o texto editado. Essa checagem não garante ausência
+de erro: permanece necessária a revisão humana.
+
+Uma versão em `auditing` não pode ser aprovada. Se a checagem falhar, o texto
+permanece salvo como `blocked` e pode ser editado/salvo novamente. Se o servidor
+reiniciar durante a tarefa em segundo plano, a versão pode permanecer em `auditing`;
+“Revisar último roteiro” recupera o texto, e salvar uma nova tentativa reinicia a
+checagem. O SHA muda com a auditoria, exigindo aprovação da versão atual.
 
 ## Persistência e áudio
 
@@ -157,6 +170,8 @@ velocidade 1.1, estabilidade/similaridade 1.0, estilo 0.0. Ver `podcast-voices.m
 - `GET /podcast-roteiro/{id}`: texto, parecer, fontes e identificador de versão.
 - `GET /podcast-roteiro/{id}/texto`: download legível.
 - `POST /podcast-roteiro/{id}/aprovar`, corpo `{"sha256":"..."}`.
+- `POST /podcast-roteiro/{id}/editar`, corpo `{"sha256":"...", "text":"Ivo: ...\nManu: ..."}`:
+  salva e retorna uma nova versão em `auditing`; consultar seu GET até encerrar.
 - `POST /iniciar-boletim`: áudio de versão aprovada exige `roteiro_aprovado_id` e
   `roteiro_aprovado_sha256`. A execução do áudio aprovado publica automaticamente
   o MP3 no Firebase e atualiza o RSS; não há etapa manual adicional.

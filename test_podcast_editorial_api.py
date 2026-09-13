@@ -3,11 +3,14 @@ import copy
 import json
 import os
 import re
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse, Response
 from fastapi.testclient import TestClient
 
@@ -23,12 +26,12 @@ class EditorialApiTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         app = FastAPI()
         wanted = {'get_ultimo_roteiro', 'get_podcast_draft', 'approve_podcast_draft',
-                  'download_podcast_script', 'download_podcast_preview'}
+                  'download_podcast_script', 'download_podcast_preview', 'edit_podcast_draft'}
         tree = ast.parse(Path(__file__).with_name('api.py').read_text())
         routes = [n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in wanted]
         ns = {'app': app, 'os': os, 're': re, 'json': json, '__file__': str(self.root / 'api.py'),
               'JSONResponse': JSONResponse, 'FileResponse': FileResponse, 'Response': Response,
-              'podcast_editorial': podcast_editorial}
+              'podcast_editorial': podcast_editorial, 'BackgroundTasks': BackgroundTasks}
         exec(compile(ast.Module(body=routes, type_ignores=[]), 'api.py', 'exec'), ns)
         self.client = TestClient(app)
         self.addCleanup(self.client.close)
@@ -53,6 +56,22 @@ class EditorialApiTest(unittest.TestCase):
         self.assertEqual(approved.json()['status'], 'approved')
         self.assertEqual(self.client.get('/podcast-roteiro/' + '0' * 32).status_code, 404)
         self.assertEqual(self.client.get('/podcast-roteiro/not-valid').status_code, 400)
+
+    def test_edit_api_saves_then_audits_and_latest_recovers_exact_text(self):
+        url = f'/podcast-roteiro/{self.draft["id"]}/editar'
+        text = 'Ivo: Vamos discutir?\n\nManu: Vamos, com cautela.'
+        with patch.dict(sys.modules, {'boletim_service': SimpleNamespace(client=fake_client())}):
+            self.assertEqual(self.client.post(url, json={'sha256': 'stale', 'text': text}).status_code, 409)
+            self.assertEqual(self.client.post(url, json={'sha256': self.draft['sha256'], 'text': ''}).status_code, 409)
+            response = self.client.post(url, json={'sha256': self.draft['sha256'], 'text': text})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['status'], 'auditing')
+        saved = self.client.get('/podcast-roteiro/' + response.json()['id']).json()
+        self.assertEqual(saved['status'], 'pending_review')
+        self.assertEqual(saved['text'], text)
+        self.assertEqual(self.client.get('/ultimo-roteiro').json()['editorial']['id'], saved['id'])
+        self.assertEqual(self.client.get('/podcast-roteiro/' + self.draft['id']).json()['text'],
+                         podcast_editorial.transcript(self.draft))
 
     def test_audio_download_only_allows_known_episode_names(self):
         self.assertEqual(self.client.get('/baixar-audio-podcast/.env').status_code, 400)
