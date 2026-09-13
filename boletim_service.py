@@ -1848,16 +1848,23 @@ def rodar_boletim(opcoes=None):
                         artigos_podcast, contexto_pubmed_report, client,
                     )
                     podcast_editorial.save_draft(BASE_DIR, editorial_draft)
-                    roteiros_audio = podcast_editorial.dialogues(editorial_draft)
-                    titulos_podcast = ["Abertura", *(a.get('titulo', '') for a in artigos_podcast), "Encerramento"]
-                    audio_canonico = True
-                    yield "📄 Roteiro e parecer científico prontos para leitura e aprovação antes do áudio."
+                    if not podcast_editorial.review_payload(editorial_draft)['can_approve']:
+                        editorial_error = ' | '.join(
+                            issue['reason'] for issue in editorial_draft['audit']['issues']
+                            if issue['severity'] == 'blocking'
+                        )
+                        yield f"⚠️ Rascunho preservado para revisão, mas bloqueado para áudio: {editorial_error}"
+                    else:
+                        roteiros_audio = podcast_editorial.dialogues(editorial_draft)
+                        titulos_podcast = ["Abertura", *(a.get('titulo', '') for a in artigos_podcast), "Encerramento"]
+                        audio_canonico = True
+                        yield "📄 Roteiro e parecer científico prontos para leitura e aprovação antes do áudio."
                 except Exception as error:
                     # The podcast must not prevent delivery of the unchanged email.
                     editorial_error = f"{type(error).__name__}: {error}"
                     editorial_draft = None
                     yield f"⚠️ Roteiro não liberado: {editorial_error}"
-                if opcoes.get('audio'):
+                if opcoes.get('audio') and not editorial_error:
                     yield "⏸️ Áudio adiado: revise e aprove a versão do roteiro exibida no painel."
                 opcoes['audio'] = False
 
@@ -2248,6 +2255,14 @@ def rodar_boletim(opcoes=None):
     rss_url = None
     audio_url = None
 
+    # Publishing/rescue and WhatsApp require a complete episode produced by this
+    # run. Never rescue unrelated old segments after a blocked/pending script.
+    if opcoes.get('firebase') and (
+        not opcoes.get('audio') or audio_error or not os.path.isfile(episodio_path)
+    ):
+        yield "⏭️ Publicação/RSS e WhatsApp ignorados: esta execução não produziu um episódio completo aprovado."
+        opcoes['firebase'] = False
+
     if opcoes.get('firebase'):
         yield "☁️ 5/5: Firebase Upload..."
         
@@ -2347,9 +2362,9 @@ def rodar_boletim(opcoes=None):
         "data_referencia": hoje,
         "boletim_path": boletim_path,
         "episodio_path": episodio_path,
-        "brief_spotify_path": brief_spotify_path if os.path.exists(brief_spotify_path) else None,
+        "brief_spotify_path": brief_spotify_path if brief_spotify_text else None,
         "brief_spotify_text": brief_spotify_text if brief_spotify_text else None,
-        "brief_spotify_download_url": f"/baixar-brief/{hoje}" if os.path.exists(brief_spotify_path) else None,
+        "brief_spotify_download_url": f"/baixar-brief/{hoje}" if brief_spotify_text else None,
         "referencias_pubmed_path": referencias_pubmed_path if referencias_pubmed_salvas else None,
         "referencias_pubmed_download_url": f"/baixar-referencias-podcast/{hoje}" if referencias_pubmed_salvas else None,
         "referencias_pubmed": contexto_pubmed_report,

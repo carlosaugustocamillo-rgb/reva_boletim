@@ -4,10 +4,11 @@ import json
 import os
 import re
 import uuid
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 
-VERSION = "editorial-1"
+VERSION = "editorial-2"
 DEFAULT_MODEL = "gpt-6-astra"
 PROMPTS = Path(__file__).parent / "prompts" / "podcast"
 
@@ -46,8 +47,21 @@ class EditorialError(ValueError):
     pass
 
 
+class CautionMismatch(EditorialError):
+    pass
+
+
 def _clean(value):
     return " ".join(str(value or "").split())
+
+
+def _caution_key(value):
+    # Compare typography only, never fuzzy-match words/negation/numeric values.
+    text = unicodedata.normalize("NFC", _clean(value)).casefold()
+    text = re.sub(r'[;!?“”"«»]', ' ', text)
+    # Preserve decimal punctuation (0.5 must not become 05 or 5).
+    text = re.sub(r'(?<!\d)[.,]|[.,](?!\d)', ' ', text)
+    return _clean(text)
 
 
 def evidence_packet(articles, context):
@@ -157,9 +171,14 @@ def validate_script(script, packet):
         check_turns(study["dialogue"], {s["source_id"] for s in evidence["sources"]})
         if {t["speaker"] for t in study["dialogue"]} != {"HOST", "COHOST"}:
             raise EditorialError("Os dois apresentadores precisam participar de cada discussão.")
-        caution = _clean(study["spoken_caution"])
-        if not caution or not any(caution in _clean(t["text"]) for t in study["dialogue"]):
-            raise EditorialError("A ressalva científica não aparece na fala do estudo.")
+        caution = _caution_key(study["spoken_caution"])
+        spoken = _caution_key(' '.join(t['text'] for t in study['dialogue']))
+        if not caution or f' {caution} ' not in f' {spoken} ':
+            raise CautionMismatch(
+                f"PMID {study['pmid']}: não foi possível vincular a ressalva às falas. "
+                f"Ressalva registrada: {_clean(study['spoken_caution'])!r}. "
+                "Confira o rascunho preservado; uma paráfrase não equivale a ausência de cautela."
+            )
     if total_words > 350 + 420 * len(packet):
         raise EditorialError("Roteiro excede o limite de duração; revise antes do áudio.")
 
@@ -190,12 +209,34 @@ def generate_episode_steps(articles, context, client):
     yield "✍️ Escrevendo a conversa completa, incluindo abertura, ressalvas e encerramento..."
     script = _request(client, model, "write", SCRIPT_SCHEMA,
                       {"evidence": packet, "plan": plan, "target_words": 180 + 280 * len(packet)}, usage)
-    validate_script(script, packet)
-    yield "🔎 Conferindo afirmações, números, comparações e ressalvas contra as fontes..."
-    audit = _request(client, model, "audit", AUDIT_SCHEMA, {"evidence": packet, "plan": plan, "script": script}, usage)
+    original_script = script
+    repair_attempted = False
+    try:
+        try:
+            validate_script(script, packet)
+        except CautionMismatch as mismatch:
+            # One bounded rewrite using the same source-bound writing contract.
+            # Never paste an unverified caveat into spoken text or bypass the audit.
+            repair_attempted = True
+            yield "🛠️ Ajustando uma vez a correspondência entre ressalva e falas, com as mesmas fontes..."
+            script = _request(client, model, "write", SCRIPT_SCHEMA,
+                              {"evidence": packet, "plan": plan, "target_words": 180 + 280 * len(packet),
+                               "previous_script": original_script, "validation_error": str(mismatch)}, usage)
+            validate_script(script, packet)
+        yield "🔎 Conferindo afirmações, números, comparações e ressalvas contra as fontes..."
+        audit = _request(client, model, "audit", AUDIT_SCHEMA, {"evidence": packet, "plan": plan, "script": script}, usage)
+    except Exception as error:
+        # A generated script must remain inspectable even if validation/audit fails.
+        # This blocking issue also prevents approval when the audit never ran.
+        audit = {"issues": [{"severity": "blocking", "location": "Validação/auditoria do roteiro",
+                             "reason": f"{type(error).__name__}: {error}"}]}
+    blocked = any(issue['severity'] == 'blocking' for issue in audit['issues'])
     draft = {"id": uuid.uuid4().hex, "version": VERSION, "model": model,
-             "created_at": datetime.now(timezone.utc).isoformat(), "status": "pending_review",
+             "created_at": datetime.now(timezone.utc).isoformat(), "status": "blocked" if blocked else "pending_review",
              "evidence": packet, "plan": plan, "script": script, "audit": audit, "usage": usage}
+    if repair_attempted:
+        draft['original_script'] = original_script
+    draft['repair_attempted'] = repair_attempted
     draft["sha256"] = fingerprint(draft)
     return draft
 

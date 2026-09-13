@@ -112,6 +112,81 @@ class EditorialTest(unittest.TestCase):
             with self.assertRaises(editorial.EditorialError):
                 editorial.validate_script(script, self.draft['evidence'])
 
+    def test_caution_typography_and_split_turns_do_not_change_spoken_text(self):
+        script = copy.deepcopy(self.draft['script'])
+        study = script['studies'][0]
+        study['spoken_caution'] = study['spoken_caution'].upper().replace(';', ',')
+        before = copy.deepcopy(study['dialogue'])
+        editorial.validate_script(script, self.draft['evidence'])
+        self.assertEqual(study['dialogue'], before)
+        study['dialogue'][1]['text'] = 'O resumo não informa perdas.'
+        study['dialogue'].append({'speaker': 'HOST', 'text': 'Não podemos avaliar esse aspecto.', 'source_ids': ['100:main']})
+        editorial.validate_script(script, self.draft['evidence'])
+
+    def test_negation_and_decimal_changes_stay_blocked_with_pmid(self):
+        for spoken, registered in (
+            ('O resumo não informa perdas.', 'O resumo informa perdas.'),
+            ('A diferença foi de 0.5 pontos.', 'A diferença foi de 05 pontos.'),
+        ):
+            script = copy.deepcopy(self.draft['script'])
+            script['studies'][0]['dialogue'][1]['text'] = spoken
+            script['studies'][0]['spoken_caution'] = registered
+            with self.assertRaisesRegex(editorial.CautionMismatch, 'PMID 100'):
+                editorial.validate_script(script, self.draft['evidence'])
+
+    def test_one_repair_then_full_validation_and_audit(self):
+        writes = []
+        def respond(**kwargs):
+            response = editorial_response(**kwargs)
+            if kwargs['response_format']['json_schema']['name'] == 'podcast_write':
+                writes.append(kwargs)
+                if len(writes) == 1:
+                    content = json.loads(response.choices[0].message.content)
+                    content['studies'][0]['spoken_caution'] = 'Paráfrase diferente da fala.'
+                    response.choices[0].message.content = json.dumps(content)
+            return response
+        client = fake_client()
+        client.with_options.return_value.chat.completions.create.side_effect = respond
+        draft = editorial.generate_episode([ANCHOR], None, client)
+        self.assertEqual(len(writes), 2)
+        self.assertEqual(draft['status'], 'pending_review')
+        self.assertTrue(draft['repair_attempted'])
+        self.assertIn('original_script', draft)
+        self.assertEqual(draft['usage'][-1]['stage'], 'audit')
+
+    def test_persistent_mismatch_preserves_readable_blocked_draft_and_no_unbounded_retry(self):
+        def respond(**kwargs):
+            response = editorial_response(**kwargs)
+            if kwargs['response_format']['json_schema']['name'] == 'podcast_write':
+                content = json.loads(response.choices[0].message.content)
+                content['studies'][0]['spoken_caution'] = 'Paráfrase diferente da fala.'
+                response.choices[0].message.content = json.dumps(content)
+            return response
+        client = fake_client()
+        client.with_options.return_value.chat.completions.create.side_effect = respond
+        draft = editorial.generate_episode([ANCHOR], None, client)
+        self.assertEqual(len(client.with_options.return_value.chat.completions.create.call_args_list), 3)
+        self.assertEqual(draft['status'], 'blocked')
+        self.assertIn('PMID 100', draft['audit']['issues'][0]['reason'])
+        editorial.save_draft(self.root, draft)
+        loaded = editorial.load_draft(self.root, draft['id'])
+        self.assertIn('Manu:', editorial.review_payload(loaded)['text'])
+        self.assertFalse(editorial.review_payload(loaded)['can_approve'])
+        with self.assertRaises(editorial.EditorialError):
+            editorial.approve_draft(self.root, draft['id'], draft['sha256'])
+
+    def test_audit_outage_preserves_script_but_cannot_be_approved(self):
+        def respond(**kwargs):
+            if kwargs['response_format']['json_schema']['name'] == 'podcast_audit':
+                raise TimeoutError('Synthetic timeout')
+            return editorial_response(**kwargs)
+        client = fake_client()
+        client.with_options.return_value.chat.completions.create.side_effect = respond
+        draft = editorial.generate_episode([ANCHOR], None, client)
+        self.assertEqual(draft['status'], 'blocked')
+        self.assertIn('Synthetic timeout', draft['audit']['issues'][0]['reason'])
+        self.assertTrue(editorial.transcript(draft))
+
     def test_refusal_incomplete_or_malformed_json_never_becomes_spoken_text(self):
         for reason, content, refusal in [('length', '{}', None), ('stop', 'bad JSON', None), ('stop', '{}', 'refused')]:
             client = MagicMock()

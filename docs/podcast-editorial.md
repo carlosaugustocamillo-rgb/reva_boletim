@@ -14,6 +14,9 @@ O cliente usa Chat Completions, saída JSON Schema estrita, sem `temperature` ou
 `top_p`, sem alterar SDK/provedor, e esforço de raciocínio padrão do modelo.
 São três chamadas por episódio (não três por artigo), até 12.000 tokens de saída
 por chamada, timeout de 180 segundos e uma repetição de transporte pelo SDK.
+Se a ressalva registrada não corresponder às falas, há no máximo uma chamada
+adicional de escrita com as mesmas fontes e o erro identificado. O resultado
+passa novamente pela validação e auditoria; não há repetição ilimitada.
 O objetivo de palavras é 180 + 280 por estudo; o limite é 350 + 420 por estudo.
 Isso é orçamento de texto, não promessa de duração exata de áudio.
 
@@ -45,6 +48,11 @@ participação dos dois hosts, presença da ressalva nas falas e limite de palav
 Isso não prova a validade científica da interpretação: a auditoria é automatizada
 e a leitura/aprovação humana continua obrigatória.
 
+A comparação da ressalva tolera maiúsculas, espaços e pontuação textual e pode
+abranger falas consecutivas. Não usa similaridade aproximada nem ignora negações
+ou diferenças numéricas. Divergências persistentes identificam o PMID e o texto
+registrado e continuam bloqueando a aprovação.
+
 ## Fluxo no painel
 
 1. Sugerir artigos → escolher até seis → selecionar referências por artigo.
@@ -69,6 +77,18 @@ O TXT ao lado contém só as falas. A aprovação exige o SHA-256 da versão exi
 que protege roteiro, pauta, fontes e auditoria. Alterações invalidam a versão.
 Os JSON/TXT antigos de etapas 8/8.5 são aliases de compatibilidade; não são a fonte
 de autorização para áudio. O áudio usa o JSON editorial aprovado.
+
+Roteiros gerados que falhem na validação ou na auditoria são preservados como
+`blocked`, com pendência visível no painel, sem substituir os aliases ativos ou
+produzir um brief. Quando houver tentativa de ajuste, `original_script` guarda
+a primeira versão no JSON. Sem uma resposta de escrita completa e estruturada,
+não existe rascunho narrável a preservar.
+
+Sem episódio completo aprovado desta execução, o pipeline não executa upload,
+RSS, resgate de segmentos antigos ou rascunho WhatsApp. O envio de e-mail segue
+as opções já selecionadas. O status terminal continua `completed` para encerrar
+o polling, mas `outcome=partial` e a mensagem final explicitam pendências do
+podcast; `outcome=pending_review` distingue a espera normal por aprovação.
 
 Não existe mais introdução aleatória fora do roteiro nem substituição das
 transições por frases genéricas. O TTS recebe o texto canônico; siglas/pronúncia

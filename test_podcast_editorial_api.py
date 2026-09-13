@@ -1,4 +1,5 @@
 import ast
+import copy
 import json
 import os
 import re
@@ -62,6 +63,34 @@ class EditorialApiTest(unittest.TestCase):
         response = self.client.get('/baixar-audio-podcast/episodio_boletim_2026-09-12.mp3')
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'test-only')
+
+    def test_blocked_draft_is_readable_but_cannot_be_approved(self):
+        self.draft['status'] = 'blocked'
+        self.draft['audit']['issues'] = [{'severity': 'blocking', 'location': 'PMID 100', 'reason': 'Ressalva divergente'}]
+        self.draft['sha256'] = podcast_editorial.fingerprint(self.draft)
+        podcast_editorial.save_draft(self.root / 'data', self.draft)
+        result = self.client.get('/ultimo-roteiro').json()['editorial']
+        self.assertFalse(result['can_approve'])
+        self.assertTrue(result['text'])
+        self.assertEqual(self.client.post(f'/podcast-roteiro/{self.draft["id"]}/aprovar',
+                         json={'sha256': self.draft['sha256']}).status_code, 409)
+
+    def test_background_completion_reports_partial_or_review_instead_of_success(self):
+        tree = ast.parse(Path(__file__).with_name('api.py').read_text())
+        node = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'processar_boletim_background')
+        for result, expected in (({'roteiro_erro': 'Failed'}, 'partial'),
+                                 ({'audio_erro': 'Failed'}, 'partial'),
+                                 ({'roteiro_editorial': {'status': 'pending_review'}}, 'pending_review'),
+                                 ({'mailchimp': {'status': 'scheduled'}}, 'success')):
+            saved = []
+            ns = {'rodar_boletim': lambda options: iter([result]), 'load_task': lambda task: {},
+                  'save_task': lambda task, value: saved.append(copy.deepcopy(value))}
+            exec(compile(ast.Module(body=[node], type_ignores=[]), 'api.py', 'exec'), ns)
+            ns['processar_boletim_background']('test', {})
+            self.assertEqual(saved[-1]['status'], 'completed')
+            self.assertEqual(saved[-1]['outcome'], expected)
+            if expected != 'success':
+                self.assertNotIn('sucesso', saved[-1]['logs'][-1])
 
 
 if __name__ == '__main__':

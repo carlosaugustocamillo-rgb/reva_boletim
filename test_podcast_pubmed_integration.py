@@ -12,6 +12,7 @@ import os
 import re
 import tempfile
 import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from datetime import datetime, timedelta
@@ -50,7 +51,7 @@ def load_functions(filename, namespace, source=None):
     return namespace
 
 
-def run_pipeline(base_dir, *, related=True, script=True, source=None):
+def run_pipeline(base_dir, *, related=True, script=True, source=None, options_override=None):
     anchor = {**ANCHOR, "journal": "Clinical Exercise Journal", "ano": "2026", "volume": "1", "issue": "2", "paginas": "10-20"}
     client = llm([decision()])
     screening_response = client.with_options.return_value.chat.completions.create.return_value
@@ -81,6 +82,7 @@ def run_pipeline(base_dir, *, related=True, script=True, source=None):
     options = {"resumos": True, "roteiro": script, "revisao_roteiro": False,
                "brief_spotify": True, "audio": False, "mailchimp": True, "firebase": False,
                "referencias_pubmed": related}
+    options.update(options_override or {})
     with patch("pubmed_related.PubMedRelatedClient", return_value=pubmed), patch.dict(os.environ, {"PODCAST_PUBMED_RELATED_ENABLED": "true"}), redirect_stdout(io.StringIO()):
         messages = list(namespace["rodar_boletim"](options))
     return {"result": messages[-1], "messages": messages, "pubmed": pubmed, "client": client,
@@ -130,6 +132,40 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         self.assertIn('Source validation failed', run['result']['roteiro_erro'])
         self.assertIsNone(run['result']['roteiro_editorial'])
         run['mailchimp'].campaigns.schedule.assert_called_once()
+
+    def test_pending_or_blocked_script_never_uploads_old_segments_or_creates_whatsapp(self):
+        from test_podcast_editorial import fake_client
+        for blocked in (False, True):
+            with self.subTest(blocked=blocked):
+                root = self.root / str(blocked)
+                (root / 'audios').mkdir(parents=True)
+                (root / 'audios' / 'estudo1_completo.mp3').write_bytes(b'old unrelated audio')
+                draft = podcast_editorial.generate_episode([ANCHOR], None, fake_client())
+                if blocked:
+                    draft['status'] = 'blocked'
+                    draft['audit']['issues'] = [{'severity': 'blocking', 'location': '100', 'reason': 'Unresolved caution'}]
+                    draft['sha256'] = podcast_editorial.fingerprint(draft)
+                def generate(*args, **kwargs):
+                    yield 'Test generation'
+                    return draft
+                firebase = MagicMock()
+                whatsapp = MagicMock()
+                with patch.object(podcast_editorial, 'generate_episode_steps', generate), patch.dict(
+                    sys.modules, {'firebase_service': firebase, 'whatsapp_service': whatsapp}
+                ):
+                    run = run_pipeline(root, options_override={'audio': True, 'firebase': True})
+                firebase.upload_file.assert_not_called()
+                firebase.update_podcast_feed.assert_not_called()
+                whatsapp.create_draft.assert_not_called()
+                run['mailchimp'].campaigns.schedule.assert_called_once()
+                self.assertIsNotNone(run['result']['roteiro_editorial'])
+                self.assertEqual(run['result']['roteiro_editorial']['can_approve'], not blocked)
+                loaded = podcast_editorial.load_draft(root, draft['id'])
+                self.assertTrue(podcast_editorial.transcript(loaded))
+                self.assertFalse(any('Tentando resgatar' in str(m) for m in run['messages']))
+                if blocked:
+                    self.assertIsNotNone(run['result']['roteiro_erro'])
+                    self.assertFalse((root / 'roteiros').exists())
 
     def test_audio_requires_approval_and_narrates_exact_saved_text_without_new_llm_calls(self):
         import uuid

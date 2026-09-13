@@ -142,7 +142,17 @@ def processar_boletim_background(task_id: str, opcoes: dict):
             save_task(task_id, task_state)
         
         task_state["status"] = "completed"
-        task_state["logs"].append("✅ Processo finalizado com sucesso.")
+        result = task_state.get('result') or {}
+        if result.get('roteiro_erro') or result.get('audio_erro'):
+            task_state['outcome'] = 'partial'
+            task_state['message'] = '⚠️ Execução encerrada com pendências no podcast; confira o roteiro e os logs.'
+        elif (result.get('roteiro_editorial') or {}).get('status') == 'pending_review':
+            task_state['outcome'] = 'pending_review'
+            task_state['message'] = '📄 Roteiro pronto para revisão; áudio ainda não gerado.'
+        else:
+            task_state['outcome'] = 'success'
+            task_state['message'] = '✅ Processo finalizado com sucesso.'
+        task_state["logs"].append(task_state['message'])
         save_task(task_id, task_state)
         
     except Exception as e:
