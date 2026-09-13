@@ -99,9 +99,25 @@ class EditorialTest(unittest.TestCase):
         self.assertEqual(turns[0], {'speaker': 'HOST', 'text': 'Olá.'})
         for text in ('Título\nIvo: Olá.\nManu: Oi.', 'Ivo: Só eu.',
                      'Ivo:\nManu: Oi.', 'Ivo: Olá.\nCarlos: Oi.\nManu: Sim.',
-                     'Ivo: ' + 'palavra ' * 800 + '\nManu: Oi.', None):
+                     'Ivo: ' + 'palavra ' * 9000 + '\nManu: Oi.', None):
             with self.subTest(text=str(text)[:40]), self.assertRaises(editorial.EditorialError):
                 editorial.parse_edited_transcript(text, 1)
+
+    def test_manual_colons_are_speech_not_speaker_labels(self):
+        text = ('Ivo: E a resposta parece ser: pelo menos em parte, sim.\n\n'
+                'Manu: Aí é tentador dar um salto e falar: o exercício reverte o envelhecimento.\n\n'
+                'Ivo: Então não é: identificou fragilidade, prescreva suplemento X.\n'
+                'Em outras palavras: precisamos discutir os limites.')
+        turns = editorial.parse_edited_transcript(text, 1)
+        self.assertEqual(len(turns), 3)
+        self.assertEqual(turns[0]['text'], 'E a resposta parece ser: pelo menos em parte, sim.')
+        self.assertEqual(turns[2]['text'], 'Então não é: identificou fragilidade, prescreva suplemento X.\n'
+                         'Em outras palavras: precisamos discutir os limites.')
+
+    def test_manual_length_can_exceed_automatic_per_study_target(self):
+        speech = 'Texto escolhido pelo editor. ' * 400
+        turns = editorial.parse_edited_transcript('Ivo: ' + speech + '\nManu: Vamos discutir.', 1)
+        self.assertEqual(turns[0]['text'], speech.strip())
 
     def test_manual_audit_failure_keeps_saved_text_blocked_and_original_untouched(self):
         editorial.save_draft(self.root, self.draft)

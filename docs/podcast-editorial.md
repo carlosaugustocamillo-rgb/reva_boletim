@@ -116,6 +116,8 @@ registrado e continuam bloqueando a aprovação.
 4. Para revisar fora do painel, usar “Copiar roteiro” e depois “Editar / colar texto
    revisado”. Cada fala começa em nova linha com `Ivo:` ou `Manu:`; rótulos em
    negrito copiados do ChatGPT também são aceitos. Colar apenas as falas completas.
+   Dois-pontos dentro das falas são preservados. A edição manual aceita até
+   60.000 caracteres, sem aplicar o alvo de palavras por estudo da escrita automática.
 5. “Salvar e conferir texto” cria outro UUID, preserva o original e inicia somente
    a auditoria das fontes em segundo plano. O painel acompanha essa conferência.
    A auditoria usa créditos de texto, mas não reescreve falas. PDF e resumos já

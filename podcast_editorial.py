@@ -336,13 +336,17 @@ def parse_edited_transcript(text, study_count):
         speech = text[match.end():matches[i + 1].start() if i + 1 < len(matches) else len(text)].strip()
         if not speech:
             raise EditorialError(f"A fala {i + 1} está vazia.")
-        if re.search(r"(?m)^\s*(?:\*\*)?[\wÀ-ÿ ]{1,40}(?:\*\*)?:", speech):
+        # The first line already follows a valid Ivo:/Manu: label. Its prose
+        # may start with e.g. "Então não é:"; that is not another speaker.
+        # Only look for a separate name-like label on subsequent lines.
+        continuation = speech.partition("\n")[2]
+        if re.search(r"(?m)^[ \t]*(?:\*\*)?(?:[A-ZÀ-Ý][a-zà-ÿ]+(?:[ \t]+[A-ZÀ-Ý][a-zà-ÿ]+){0,2}|[A-Z_]{2,20})(?:\*\*)?:", continuation):
             raise EditorialError("Use apenas Ivo: e Manu: como nomes dos locutores.")
         turns.append({"speaker": "HOST" if match.group(1).casefold() == "ivo" else "COHOST", "text": speech})
     if {t["speaker"] for t in turns} != {"HOST", "COHOST"}:
         raise EditorialError("O roteiro precisa ter falas de Ivo e Manu.")
-    if sum(len(t["text"].split()) for t in turns) > 350 + 420 * study_count:
-        raise EditorialError("Roteiro excede o limite de duração; reduza o texto antes de salvar.")
+    # The per-study word target belongs to automatic writing. Manual edits
+    # may be longer; the 60,000-character input limit still bounds the request.
     return turns
 
 
