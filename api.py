@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, BackgroundTasks, Request, Response
+from fastapi import FastAPI, BackgroundTasks, Request, Response, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import base64
@@ -19,6 +19,7 @@ from elevenlabs_utils import diagnosticar_erro_elevenlabs
 from connected_papers import build_manual_report, parse_bibtex
 from pubmed_related import PubMedRelatedClient, RelatedConfig, prefilter
 import podcast_editorial
+from podcast_pdf import PodcastPdfError, save_pdf
 
 def simple_slugify(text):
     text = text.lower().strip()
@@ -95,6 +96,7 @@ import json
 # Define diretório global de tarefas
 TASK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tasks")
 os.makedirs(TASK_DIR, exist_ok=True)
+BASE_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 
 def save_task(task_id, data):
     """Salva o estado da tarefa em um arquivo JSON."""
@@ -491,6 +493,23 @@ def importar_connected_papers(payload: ConnectedPapersImportInput):
         result["arquivo_nome"] = payload.filename
         return result
     except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+
+
+@app.post("/podcast-pdf")
+async def upload_podcast_pdf(
+    file: UploadFile = File(...),
+    source_json: str = Form("{}"),
+):
+    """Salva e extrai um artigo completo associado a uma fonte do podcast."""
+    try:
+        source = json.loads(source_json)
+        if not isinstance(source, dict):
+            raise PodcastPdfError("Metadados da fonte inválidos.")
+        data = await file.read(25 * 1024 * 1024 + 1)
+        result = save_pdf(BASE_DATA_DIR, data, file.filename or "artigo.pdf", source)
+        return {"pdf_document": result}
+    except (PodcastPdfError, json.JSONDecodeError) as error:
         return JSONResponse(status_code=400, content={"error": str(error)})
 
 

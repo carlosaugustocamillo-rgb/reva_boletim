@@ -1845,7 +1845,7 @@ def rodar_boletim(opcoes=None):
                 yield "🎙️ Planejamento global → conversa completa → checagem das fontes (somente podcast)."
                 try:
                     editorial_draft = yield from podcast_editorial.generate_episode_steps(
-                        artigos_podcast, contexto_pubmed_report, client,
+                        artigos_podcast, contexto_pubmed_report, client, base_dir=BASE_DIR,
                     )
                     podcast_editorial.save_draft(BASE_DIR, editorial_draft)
                     if not podcast_editorial.review_payload(editorial_draft)['can_approve']:

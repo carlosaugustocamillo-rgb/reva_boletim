@@ -29,17 +29,70 @@ Isso é orçamento de texto, não promessa de duração exata de áudio.
 
 As etapas aparecem nos logs e oferecem pontos de cancelamento entre chamadas.
 O modelo não navega: usa somente os artigos aprovados e as referências selecionadas.
+PDFs pesquisáveis podem ser anexados tanto ao artigo principal quanto às referências
+semelhantes. O texto é extraído página a página, persistido no volume em
+`data/podcast_pdfs` e identificado por hash. Quando há PDF, ele é a fonte científica
+prioritária nas três etapas; sem PDF, permanece o resumo com sua limitação explícita.
 O uso real de tokens por etapa fica no parecer. A estimativa antiga de custos
 do boletim **não inclui** o novo roteiro; isso está explícito no retorno.
 
+## Conversa e ritmo (`editorial-4-conversation`)
+
+A pauta agora organiza dúvidas e limites que os dois colegas podem discutir.
+A escrita pede que cada resposta desenvolva algo específico da fala anterior:
+um resultado, uma ressalva ou uma interpretação. Ambos podem perguntar e explicar.
+Não há número obrigatório de trocas, interjeições ou perguntas por estudo.
+
+Para reduzir períodos longos, a referência de escrita é uma ideia por frase,
+geralmente em 8–18 palavras. Acima de 25 palavras, o escritor reavalia onde separar
+a explicação, sem cortar relações científicas. São referências de ritmo, não
+limites impostos por código nem prova de naturalidade. Respostas breves convivem
+com explicações maiores; o orçamento total de palavras continua igual.
+
+`write.txt` inclui exemplos fictícios e uma revisão da interação dentro da mesma
+chamada. O ajuste já existente de `spoken_caution` usa esse mesmo prompt, para
+preservar o estilo ao corrigir uma divergência. A auditoria procura exposições
+alternadas, perguntas de apresentador, frases densas e cautelas recitadas; indica
+a localização como `note`, sem bloquear a aprovação por preferência de estilo.
+Erros científicos continuam bloqueantes. A auditoria distingue PDF de resumo e
+não interpreta informação ausente como procedimento que não foi realizado.
+
+O fluxo ativo não usa os reescritores legados de transições nem uma etapa de
+polimento depois da aprovação. `dialogues()` retira só os metadados e o TTS recebe
+`text` exatamente como foi aprovado, inclusive respostas curtas e falas sucessivas
+do mesmo locutor. Modelo, vozes, velocidade e pausas de mixagem não mudaram.
+
+### Comparação controlada
+
+`scripts/compare_podcast_conversation.py` executa as etapas editoriais antiga e nova
+usando os mesmos dois estudos sintéticos e a mesma referência complementar de
+`tests/fixtures/podcast_conversation.json`. Usa a mesma meta de palavras, modelo,
+schema e parâmetros; só muda o diretório de prompts. É uma execução paga de texto
+sob demanda, fora do pipeline de publicação, e não chama ElevenLabs/Firebase.
+
+```
+./.venv/bin/python scripts/compare_podcast_conversation.py \
+  --before-prompts /caminho/snapshot-dos-prompts \
+  --output /private/tmp/comparacao-nova
+```
+
+Os artefatos incluem fontes, prompts e hashes, roteiros, parecer, consumo real e
+contagens descritivas. A avaliação humana deve conferir dependência entre falas,
+contribuição dos dois, ritmo, transições e preservação dos fatos. Não usar apenas
+a redução no tamanho das frases para decidir se o diálogo ficou natural.
+
+Ver [o comparativo realizado em 13/09/2026](podcast-conversation-comparison.md),
+com trechos reais das respostas da API sobre fontes sintéticas e limites da avaliação.
+
 ## Qualidade científica: o que é e o que não é
 
-O material disponível é resumo original, tradução identificada ou só metadados.
-BibTeX sem resumo não sustenta afirmações sobre resultados. A análise não se
-apresenta como leitura do texto completo, RoB 2, ROBINS-I, AMSTAR ou GRADE.
+O material disponível é texto extraído de PDF, resumo original, tradução identificada
+ou só metadados. BibTeX sem resumo/PDF não sustenta afirmações sobre resultados.
+A análise identifica o material efetivamente fornecido; não atribui uma avaliação
+formal de RoB 2, ROBINS-I, AMSTAR ou GRADE.
 
 O parecer distingue ponto favorável documentado, limitação documentada, informação
-não relatada no resumo e limite inferencial do desenho. Não transforma ausência de
+não relatada no material disponível e limite inferencial do desenho. Não transforma ausência de
 informação em falha metodológica. Não privilegia automaticamente ECR/RS nem descarta
 qualitativos/observacionais. Similaridade não é concordância nem qualidade.
 
@@ -105,8 +158,8 @@ velocidade 1.1, estabilidade/similaridade 1.0, estilo 0.0. Ver `podcast-voices.m
 - `GET /podcast-roteiro/{id}/texto`: download legível.
 - `POST /podcast-roteiro/{id}/aprovar`, corpo `{"sha256":"..."}`.
 - `POST /iniciar-boletim`: áudio de versão aprovada exige `roteiro_aprovado_id` e
-  `roteiro_aprovado_sha256`. Para prévia: áudio true; resumos, roteiro, Mailchimp,
-  Firebase, referências e brief false.
+  `roteiro_aprovado_sha256`. A execução do áudio aprovado publica automaticamente
+  o MP3 no Firebase e atualiza o RSS; não há etapa manual adicional.
 - `GET /baixar-audio-podcast/{filename}`: somente nomes de episódios MP3 válidos.
 
 Railway: manter `OPENAI_API_KEY`; acrescentar `PODCAST_SCRIPT_MODEL=gpt-6-astra`

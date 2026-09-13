@@ -1,0 +1,40 @@
+{
+  "notice": "Material inteiramente sintético para avaliação de estilo e regressão. Identificadores e estudos fictícios. Não publicar nem tratar como evidência clínica.",
+  "articles": [
+    {
+      "pmid": "900001",
+      "titulo": "Synthetic trial: supervised exercise and fatigue during breast cancer chemotherapy",
+      "autores": ["Silva A"],
+      "data_publicacao": "2026-09-01",
+      "tipos": ["Randomized Controlled Trial"],
+      "resumo_original": "In this synthetic randomized trial, 80 adults receiving chemotherapy for breast cancer were allocated to supervised exercise twice weekly for eight weeks or usual care. The primary outcome was fatigue on a 0-10 scale, with higher scores indicating worse fatigue. At eight weeks, the between-group mean difference was -0.4 points (95% CI -1.1 to 0.3). The trial did not demonstrate a between-group difference in fatigue. Twelve participants did not complete the final assessment. Allocation concealment, handling of missing data and adverse events are not described in this abstract. The findings do not establish equivalence between the groups."
+    },
+    {
+      "pmid": "900002",
+      "titulo": "Synthetic qualitative study: experiences of home telerehabilitation in COPD",
+      "autores": ["Pereira M"],
+      "data_publicacao": "2026-09-02",
+      "tipos": ["Qualitative Study"],
+      "resumo_original": "This synthetic qualitative study used semi-structured interviews with 12 adults with COPD who completed a six-week home telerehabilitation programme at one centre. Interview transcripts underwent thematic analysis. Participants described easier access without travel, while unreliable internet connections interrupted participation. Some participants wanted more contact with the therapist. The sample included programme completers only; reasons for dropout were not investigated. This study explored experiences and did not measure comparative clinical effectiveness. Findings describe this context and do not estimate how frequent these experiences are among all people with COPD."
+    }
+  ],
+  "context": {
+    "estudos": [
+      {
+        "pmid_ancora": "900001",
+        "modo": "curadoria_manual",
+        "referencias": [
+          {
+            "pmid": "900003",
+            "titulo": "Synthetic earlier trial: exercise and fatigue after breast cancer chemotherapy",
+            "autores": ["Costa L"],
+            "data_publicacao": "2025-04-01",
+            "tipos": ["Randomized Controlled Trial"],
+            "resumo_original": "In this synthetic randomized trial, 60 adults who had completed chemotherapy for breast cancer received supervised exercise three times weekly for twelve weeks or usual care. Fatigue was measured on a 0-10 scale, with higher scores indicating worse fatigue. The between-group mean difference at twelve weeks was -1.2 points (95% CI -1.8 to -0.6). The intervention group had lower fatigue scores. The study population was assessed after chemotherapy, not during chemotherapy. The abstract provides no threshold for clinical importance and does not report allocation concealment or losses to follow-up."
+          }
+        ]
+      },
+      {"pmid_ancora": "900002", "modo": "curadoria_manual", "referencias": []}
+    ]
+  }
+}

@@ -7,8 +7,9 @@ import uuid
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
+from podcast_pdf import load_pdf, source_text
 
-VERSION = "editorial-2"
+VERSION = "editorial-4-conversation"
 DEFAULT_MODEL = "gpt-6-astra"
 PROMPTS = Path(__file__).parent / "prompts" / "podcast"
 
@@ -22,7 +23,7 @@ def array(items):
 
 
 STR = {"type": "string"}
-SUPPORT = obj(source_id=STR, quote=STR)
+SUPPORT = obj(source_id=STR, quote=STR, location=STR)
 OBSERVATION = obj(
     kind={"type": "string", "enum": ["strength", "documented_limit", "not_reported", "design_scope"]},
     explanation=STR, supports=array(SUPPORT),
@@ -55,6 +56,14 @@ def _clean(value):
     return " ".join(str(value or "").split())
 
 
+def _source_keys(value):
+    return {
+        _clean(value.get(key)).casefold()
+        for key in ("pmid", "doi", "source_id", "titulo", "title")
+        if _clean(value.get(key))
+    }
+
+
 def _caution_key(value):
     # Compare typography only, never fuzzy-match words/negation/numeric values.
     text = unicodedata.normalize("NFC", _clean(value)).casefold()
@@ -64,13 +73,18 @@ def _caution_key(value):
     return _clean(text)
 
 
-def evidence_packet(articles, context):
-    """Only source metadata/abstracts, never similarity decisions as scientific evidence."""
+def evidence_packet(articles, context, base_dir=None):
+    """Build evidence from full PDFs when supplied, otherwise from abstracts."""
     if not 1 <= len(articles) <= 6:
         raise EditorialError("Selecione de um a seis estudos principais.")
     context_by_id = {str(s.get("pmid_ancora")): s for s in (context or {}).get("estudos", [])}
+    context_main = {
+        str(item.get("pmid") or item.get("doi") or item.get("source_id") or ""): item
+        for item in (context or {}).get("artigos_principais", [])
+    }
     packet = []
     seen = set()
+    total_content_chars = 0
     for article in articles:
         pmid = str(article.get("pmid", ""))
         if not pmid.isdigit() or pmid in seen:
@@ -81,12 +95,19 @@ def evidence_packet(articles, context):
         refs = group.get("referencias", [])
         if len(refs) > 12:
             raise EditorialError("Limite editorial: até 12 referências por estudo principal.")
-        for index, item in enumerate([article, *refs]):
+        main_context = context_main.get(pmid) or context_main.get(str(article.get("doi") or "")) or {}
+        main_item = {**article, **({"pdf_document": main_context.get("pdf_document")} if main_context.get("pdf_document") else {})}
+        for index, item in enumerate([main_item, *refs]):
             original = _clean(item.get("resumo_original"))
             # A translation is not a full text; keep its provenance explicit.
             abstract = original or (_clean(item.get("resumo_traduzido")) if index == 0 else "")
             if len(abstract) > 16000:
                 raise EditorialError("Resumo excede o limite editorial; não será truncado silenciosamente.")
+            pdf_descriptor = item.get("pdf_document") or {}
+            pdf = load_pdf(base_dir, pdf_descriptor.get("id")) if base_dir and pdf_descriptor.get("id") else None
+            if pdf and not (_source_keys(pdf.get("source", {})) & _source_keys(item)):
+                raise EditorialError("O PDF anexado não corresponde ao artigo desta fonte.")
+            full_text = source_text(pdf) if pdf else ""
             sources.append({
                 "source_id": f"{pmid}:main" if index == 0 else f"{pmid}:ref{index}",
                 "role": "main" if index == 0 else "context",
@@ -95,11 +116,19 @@ def evidence_packet(articles, context):
                 "authors": item.get("autores") or [item.get("primeiro_autor") or "Autor não informado"],
                 "publication_date": _clean(item.get("data_publicacao")),
                 "study_types": item.get("tipos") or [], "abstract": abstract,
-                "material": "original_abstract" if original else "translated_abstract" if abstract else "metadata_only",
+                "content": full_text or abstract,
+                "material": "full_text_pdf" if full_text else "original_abstract" if original else "translated_abstract" if abstract else "metadata_only",
+                "pdf": ({key: pdf[key] for key in ("id", "filename", "sha256", "page_count", "extracted_page_count", "character_count")} if pdf else None),
             })
-        if not sources[0]["abstract"]:
-            raise EditorialError(f"PMID {pmid} sem resumo: falta material para o roteiro.")
+            total_content_chars += len(full_text or abstract)
+        if not sources[0]["content"]:
+            raise EditorialError(f"PMID {pmid} sem resumo ou PDF: falta material para o roteiro.")
         packet.append({"pmid": pmid, "selection_mode": group.get("modo", "automatic"), "sources": sources})
+    if total_content_chars > 1_800_000:
+        raise EditorialError(
+            "Os PDFs selecionados excedem o limite de leitura profunda desta execução. "
+            "Reduza o número de referências ou divida o episódio."
+        )
     return packet
 
 
@@ -136,12 +165,12 @@ def validate_plan(plan, packet):
         sources = {s["source_id"]: s for s in evidence["sources"]}
         def check_support(supports, required=True):
             if required and not supports:
-                raise EditorialError("Afirmação sem trecho de apoio no resumo.")
+                raise EditorialError("Afirmação sem trecho literal de apoio na fonte.")
             for support in supports:
                 source = sources.get(support.get("source_id"))
                 quote = _clean(support.get("quote"))
-                if not source or not quote or quote not in source["abstract"]:
-                    raise EditorialError("Trecho de apoio ausente da fonte indicada.")
+                if not source or not quote or quote not in source["content"]:
+                    raise EditorialError("Trecho de apoio ausente do PDF/resumo indicado.")
         check_support(study["supports"])
         if f'{study["pmid"]}:main' not in {s["source_id"] for s in study["supports"]}:
             raise EditorialError("O achado principal não está vinculado ao estudo principal.")
@@ -199,11 +228,12 @@ def fingerprint(draft):
     return hashlib.sha256(json.dumps(protected, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def generate_episode_steps(articles, context, client):
-    packet = evidence_packet(articles, context)
+def generate_episode_steps(articles, context, client, base_dir=None):
+    packet = evidence_packet(articles, context, base_dir=base_dir)
     model = os.environ.get("PODCAST_SCRIPT_MODEL", DEFAULT_MODEL).strip()
     usage = []
-    yield f"🧠 Planejando o episódio completo com {model} e avaliação crítica baseada nos resumos..."
+    pdf_count = sum(s["material"] == "full_text_pdf" for study in packet for s in study["sources"])
+    yield f"🧠 Planejando o episódio completo com {model}: {pdf_count} PDF(s) integral(is) e avaliação crítica rastreável..."
     plan = _request(client, model, "plan", PLAN_SCHEMA, {"evidence": packet}, usage)
     validate_plan(plan, packet)
     yield "✍️ Escrevendo a conversa completa, incluindo abertura, ressalvas e encerramento..."
@@ -241,8 +271,8 @@ def generate_episode_steps(articles, context, client):
     return draft
 
 
-def generate_episode(articles, context, client, log=lambda message: None):
-    steps = generate_episode_steps(articles, context, client)
+def generate_episode(articles, context, client, log=lambda message: None, base_dir=None):
+    steps = generate_episode_steps(articles, context, client, base_dir=base_dir)
     while True:
         try:
             log(next(steps))
@@ -298,9 +328,17 @@ def approved_audio(base_dir, draft_id, sha256):
 
 
 def review_payload(draft):
+    public_evidence = []
+    for study in draft["evidence"]:
+        public_study = {**study, "sources": []}
+        for source in study["sources"]:
+            # O texto integral permanece no rascunho protegido no backend; o
+            # painel recebe somente metadados, resumo e rastreabilidade.
+            public_study["sources"].append({key: value for key, value in source.items() if key != "content"})
+        public_evidence.append(public_study)
     return {"id": draft["id"], "sha256": draft["sha256"], "status": draft["status"],
             "model": draft["model"], "title": draft["script"]["title"], "text": transcript(draft),
             "plan": draft["plan"], "audit": draft["audit"], "usage": draft["usage"],
-            "evidence": draft["evidence"],
+            "evidence": public_evidence,
             "can_approve": not any(i["severity"] == "blocking" for i in draft["audit"]["issues"]),
             "download_url": f'/podcast-roteiro/{draft["id"]}/texto'}

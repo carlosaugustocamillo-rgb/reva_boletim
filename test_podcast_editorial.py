@@ -84,6 +84,28 @@ class EditorialTest(unittest.TestCase):
         with self.assertRaises(editorial.EditorialError):
             editorial.validate_plan(broken, packet)
 
+    def test_full_pdf_replaces_abstract_and_preserves_page_markers(self):
+        document_id = 'a' * 32
+        pdf_dir = self.root / 'podcast_pdfs'
+        pdf_dir.mkdir()
+        metadata = {
+            'id': document_id, 'filename': 'study.pdf', 'sha256': 'hash',
+            'page_count': 2, 'extracted_page_count': 2, 'character_count': 74,
+            'source': {'pmid': '100'},
+            'pages': [
+                {'page': 1, 'text': 'Methods included forty participants.'},
+                {'page': 2, 'text': 'The intervention improved walking distance.'},
+            ],
+        }
+        (pdf_dir / f'{document_id}.json').write_text(json.dumps(metadata), encoding='utf-8')
+        context = copy.deepcopy(self.context)
+        context['artigos_principais'] = [{**ANCHOR, 'pdf_document': {'id': document_id}}]
+        packet = editorial.evidence_packet([ANCHOR], context, base_dir=self.root)
+        source = packet[0]['sources'][0]
+        self.assertEqual(source['material'], 'full_text_pdf')
+        self.assertIn('[[PÁGINA 2]]', source['content'])
+        self.assertIn('improved walking distance', source['content'])
+
     def test_unknown_source_invented_quote_or_main_finding_from_reference_rejected(self):
         for support in ({'source_id': 'unknown', 'quote': 'text'},
                         {'source_id': '100:main', 'quote': 'Invented finding'},

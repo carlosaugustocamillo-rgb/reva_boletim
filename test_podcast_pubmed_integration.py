@@ -173,6 +173,21 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         run = run_pipeline(self.root)
         ns = run['namespace']
         review = run['result']['roteiro_editorial']
+        # The reviewed dialogue may contain short replies, follow-ups and two
+        # consecutive turns by the same host. TTS must keep all of them verbatim.
+        draft = podcast_editorial.load_draft(self.root, review['id'])
+        draft['script']['studies'][0]['dialogue'] = [
+            {'speaker': 'HOST', 'text': 'A fadiga não diferiu entre os grupos.', 'source_ids': ['100:main']},
+            {'speaker': 'COHOST', 'text': 'E as perdas?', 'source_ids': ['100:main']},
+            {'speaker': 'HOST', 'text': 'O resumo não informa.', 'source_ids': ['100:main']},
+            {'speaker': 'HOST', 'text': 'Não podemos avaliar esse aspecto.', 'source_ids': ['100:main']},
+            {'speaker': 'COHOST', 'text': 'Então essa parte segue em aberto.', 'source_ids': ['100:main']},
+        ]
+        draft['script']['studies'][0]['spoken_caution'] = 'O resumo não informa. Não podemos avaliar esse aspecto.'
+        podcast_editorial.validate_script(draft['script'], draft['evidence'])
+        draft['sha256'] = podcast_editorial.fingerprint(draft)
+        podcast_editorial.save_draft(self.root, draft)
+        review = podcast_editorial.review_payload(draft)
         ns.update(load_voice_config())
         ns.update({'uuid': uuid, 'DATA_DIR': str(self.root), 'INTRO_PATH': str(self.root / 'no-intro.mp3'),
                    'formatar_erro_elevenlabs': str})
