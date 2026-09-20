@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import os
 
 import revamais_editorial as editorial
 
@@ -85,11 +86,17 @@ def passing_audit(_payload):
 
 class RevaMaisEditorialTest(unittest.TestCase):
     def setUp(self):
+        self.previous_remote_persistence = os.environ.get("REVAMAIS_EDITORIAL_PERSIST_REMOTE")
+        os.environ["REVAMAIS_EDITORIAL_PERSIST_REMOTE"] = "false"
         self.temp = tempfile.TemporaryDirectory()
         self.base_dir = self.temp.name
 
     def tearDown(self):
         self.temp.cleanup()
+        if self.previous_remote_persistence is None:
+            os.environ.pop("REVAMAIS_EDITORIAL_PERSIST_REMOTE", None)
+        else:
+            os.environ["REVAMAIS_EDITORIAL_PERSIST_REMOTE"] = self.previous_remote_persistence
 
     def create_audited(self):
         draft = editorial.create_draft(self.base_dir, sample_result(), source_task_id="task-1")
@@ -221,6 +228,32 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertEqual(updated["metadata"]["data_publicacao"], "01/10/2026")
         self.assertIn("01/10/2026", updated["content"]["html_content"])
         self.assertNotIn("20/09/2026", updated["content"]["html_content"])
+
+    def test_schedule_edit_keeps_documented_manual_override(self):
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        blocked = editorial.audit_draft(
+            self.base_dir, draft["id"], None,
+            audit_fn=lambda _payload: {"issues": [], "claims": [], "appraisals": []},
+        )
+        released = editorial.override_audit_block(
+            self.base_dir, blocked["id"], blocked["sha256"], "A equipe conferiu as fontes manualmente antes de publicar.",
+        )
+        updated = editorial.save_schedule_draft(
+            self.base_dir, released["id"], released["sha256"], "2026-10-01T09:30:00-03:00"
+        )
+        self.assertEqual(updated["status"], "pending_review")
+        self.assertTrue(updated.get("manual_override"))
+        self.assertTrue(editorial.review_payload(updated)["can_approve"])
+
+    def test_restores_review_payload_after_local_draft_is_lost(self):
+        original = self.create_audited()
+        payload = editorial.review_payload(original)
+        path = editorial.draft_path(self.base_dir, original["id"])
+        path.unlink()
+        restored = editorial.restore_draft_snapshot(self.base_dir, payload)
+        self.assertEqual(restored["id"], original["id"])
+        self.assertEqual(restored["content"]["title"], original["content"]["title"])
+        self.assertTrue(editorial.draft_path(self.base_dir, original["id"]).exists())
 
     def test_list_drafts_returns_only_latest_revision_for_each_edition(self):
         previous = self.create_audited()

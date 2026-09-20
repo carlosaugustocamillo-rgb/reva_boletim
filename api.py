@@ -653,6 +653,10 @@ class RevaMaisDraftScheduleInput(RevaMaisDraftVersionInput):
     schedule_time: str
 
 
+class RevaMaisDraftRestoreInput(BaseModel):
+    draft: dict
+
+
 class RevaMaisRegenerateAssetInput(BaseModel):
     sha256: str
     instruction: str = ""
@@ -730,6 +734,16 @@ def get_revamais_draft(draft_id: str, request: Request):
 def list_revamais_drafts(request: Request, limit: int = 80):
     require_revamais_admin(request)
     return {"drafts": revamais_editorial.list_drafts(BASE_DATA_DIR, limit=limit)}
+
+
+@app.post("/revamais-rascunho/restaurar")
+def restore_revamais_draft(payload: RevaMaisDraftRestoreInput, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.restore_draft_snapshot(BASE_DATA_DIR, payload.draft)
+        return revamais_editorial.review_payload(draft)
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
 
 
 @app.post("/revamais-rascunho/{draft_id}/editar")

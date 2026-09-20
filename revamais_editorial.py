@@ -26,6 +26,7 @@ DEFAULT_MODEL = os.environ.get("REVAMAIS_AUDIT_MODEL", "gpt-6-astra").strip()
 AUDIT_MAX_COMPLETION_TOKENS = int(os.environ.get("REVAMAIS_AUDIT_MAX_COMPLETION_TOKENS", "16000"))
 CONTENT_START = "<!-- REVAMAIS_CONTENT_START -->"
 CONTENT_END = "<!-- REVAMAIS_CONTENT_END -->"
+FIRESTORE_COLLECTION = "revamais_editorial_drafts"
 
 
 class RevaMaisEditorialError(ValueError):
@@ -272,6 +273,43 @@ def draft_path(base_dir, draft_id):
     return Path(base_dir) / "revamais_editorial" / f"{draft_id}.json"
 
 
+def _firestore_collection():
+    """Firestore is the durable source; local JSON remains a fast/offline cache."""
+    if str(os.environ.get("REVAMAIS_EDITORIAL_PERSIST_REMOTE", "true")).lower() not in {"1", "true", "yes"}:
+        return None
+    try:
+        from firebase_service import get_firestore_db
+        db = get_firestore_db()
+        return db.collection(FIRESTORE_COLLECTION) if db else None
+    except Exception as error:
+        print(f"⚠️ Firestore indisponível para Reva+ editorial: {error}")
+        return None
+
+
+def _save_remote_draft(draft):
+    collection = _firestore_collection()
+    if not collection:
+        return False
+    try:
+        collection.document(draft["id"]).set(copy.deepcopy(draft))
+        return True
+    except Exception as error:
+        print(f"⚠️ Não foi possível persistir o rascunho Reva+ no Firestore: {error}")
+        return False
+
+
+def _load_remote_draft(draft_id):
+    collection = _firestore_collection()
+    if not collection:
+        return None
+    try:
+        snapshot = collection.document(draft_id).get()
+        return snapshot.to_dict() if snapshot.exists else None
+    except Exception as error:
+        print(f"⚠️ Não foi possível ler o rascunho Reva+ no Firestore: {error}")
+        return None
+
+
 def save_draft(base_dir, draft):
     draft["sha256"] = fingerprint(draft)
     path = draft_path(base_dir, draft["id"])
@@ -283,27 +321,47 @@ def save_draft(base_dir, draft):
     finally:
         if temp.exists():
             temp.unlink()
+    _save_remote_draft(draft)
     return draft
 
 
 def load_draft(base_dir, draft_id):
-    draft = json.loads(draft_path(base_dir, draft_id).read_text(encoding="utf-8"))
+    path = draft_path(base_dir, draft_id)
+    if path.exists():
+        draft = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        draft = _load_remote_draft(draft_id)
+        if not draft:
+            raise FileNotFoundError(path)
     if draft.get("sha256") != fingerprint(draft):
         raise RevaMaisEditorialError("O rascunho foi alterado fora do fluxo editorial. Gere uma nova versão.")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(draft, ensure_ascii=False, indent=2), encoding="utf-8")
     return draft
 
 
 def list_drafts(base_dir, limit=80):
     """Return only the latest revision of each Reva+ editorial lineage."""
+    records_by_id = {}
     directory = Path(base_dir) / "revamais_editorial"
-    if not directory.exists():
-        return []
-    records = []
-    for path in directory.glob("*.json"):
+    if directory.exists():
+        for path in directory.glob("*.json"):
+            try:
+                draft = load_draft(base_dir, path.stem)
+                records_by_id[draft["id"]] = draft
+            except (OSError, ValueError, json.JSONDecodeError):
+                continue
+    collection = _firestore_collection()
+    if collection:
         try:
-            records.append(load_draft(base_dir, path.stem))
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
+            for snapshot in collection.stream():
+                draft = snapshot.to_dict()
+                if draft and draft.get("id") and draft.get("sha256") == fingerprint(draft):
+                    records_by_id[draft["id"]] = draft
+        except Exception as error:
+            print(f"⚠️ Não foi possível listar rascunhos Reva+ no Firestore: {error}")
+    records = list(records_by_id.values())
     parent_ids = {item.get("parent_id") for item in records if item.get("parent_id")}
     latest = [item for item in records if item.get("id") not in parent_ids]
     latest.sort(key=lambda item: item.get("created_at", ""), reverse=True)
@@ -381,6 +439,48 @@ def create_draft(base_dir, result, source_task_id=None):
     }
     save_draft(base_dir, draft)
     return draft
+
+
+def restore_draft_snapshot(base_dir, snapshot):
+    """Restore an editorial payload retained by the frontend after a Railway restart."""
+    if not isinstance(snapshot, dict):
+        raise RevaMaisEditorialError("Snapshot editorial inválido.")
+    draft_id = str(snapshot.get("id") or "")
+    draft_path(base_dir, draft_id)  # validates the identifier
+    try:
+        return load_draft(base_dir, draft_id)
+    except FileNotFoundError:
+        pass
+    content = snapshot.get("content") if isinstance(snapshot.get("content"), dict) else {}
+    title = _clean(content.get("title") or snapshot.get("title"))
+    content_html = sanitize_html(content.get("html_content") or "")
+    if not title or not content_html:
+        raise RevaMaisEditorialError("O snapshot não contém conteúdo suficiente para restauração.")
+    visual_assets = normalize_assets({"visual_assets": snapshot.get("visual_assets") or []})
+    restored = {
+        "id": draft_id,
+        "version": VERSION,
+        "created_at": _clean(snapshot.get("created_at")) or _utc_now(),
+        "status": str(snapshot.get("status") or "blocked"),
+        "parent_id": snapshot.get("parent_id"),
+        "metadata": copy.deepcopy(snapshot.get("metadata") or {}),
+        "content": {
+            "title": title,
+            "html_content": content_html,
+            "html_full": str(content.get("html_full") or ""),
+            "instagram_assets": copy.deepcopy(content.get("instagram_assets") or []),
+        },
+        "visual_assets": visual_assets,
+        "evidence": copy.deepcopy(snapshot.get("evidence") or []),
+        "audit": copy.deepcopy(snapshot.get("audit") or {"issues": [], "claims": [], "appraisals": [], "coverage": {}}),
+        "publication_progress": copy.deepcopy(snapshot.get("publication") or {}),
+        "visual_review_required": bool(snapshot.get("visual_review_required")),
+        "usage": copy.deepcopy(snapshot.get("usage") or []),
+    }
+    if snapshot.get("manual_override"):
+        restored["manual_override"] = copy.deepcopy(snapshot["manual_override"])
+    save_draft(base_dir, restored)
+    return restored
 
 
 AUDIT_SCHEMA = {
@@ -839,6 +939,9 @@ def save_schedule_draft(base_dir, draft_id, sha256, schedule_time):
     draft["metadata"]["data_iso"] = utc_iso
     draft["metadata"]["data_local_iso"] = local_iso
     draft["schedule_updated_at"] = _utc_now()
+    if previous.get("manual_override"):
+        # Date-only edits do not alter clinical claims; retain the documented human decision.
+        draft["manual_override"] = copy.deepcopy(previous["manual_override"])
     if status == "approved":
         draft["approved_at"] = previous.get("approved_at") or previous.get("published_at") or _utc_now()
         draft["approval_inherited_for_schedule"] = True
