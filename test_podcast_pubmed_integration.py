@@ -215,6 +215,9 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         self.assertEqual([call.kwargs['text'] for call in synth.call_args_list], expected)
         self.assertIsNotNone(result['audio_download_url'])
         self.assertIsNone(result['audio_erro'])
+        self.assertEqual(result['brief_spotify_text'], 'Descrição científica do episódio.')
+        self.assertEqual(result['brief_spotify_download_url'], '/baixar-brief/2026-09-04')
+        self.assertTrue((self.root / 'brief_spotify_2026-09-04.txt').exists())
         run['client'].with_options.assert_not_called()
         run['mailchimp'].campaigns.create.assert_not_called()
         self.assertFalse(options['resumos'])
@@ -248,8 +251,7 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         self.assertIn("Earlier exercise trial 200", script_prompt)
         campaign_html = run["mailchimp"].campaigns.set_content.call_args.args[1]["html"]
         self.assertNotIn("Earlier exercise trial 200", campaign_html)
-        notes = (self.root / "brief_spotify_2026-09-04.txt").read_text()
-        self.assertIn("https://pubmed.ncbi.nlm.nih.gov/200/", notes)
+        self.assertFalse((self.root / "brief_spotify_2026-09-04.txt").exists())
         audit = json.loads(Path(run["result"]["referencias_pubmed_path"]).read_text())
         self.assertEqual(audit["estudos"][0]["referencias"][0]["pmid"], "200")
         self.assertEqual(run["result"]["referencias_pubmed_download_url"], "/baixar-referencias-podcast/2026-09-04")
@@ -259,7 +261,7 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         disabled = run_pipeline(self.root, related=False)
         self.assertIsNone(disabled["result"]["referencias_pubmed_path"])
         self.assertIsNone(disabled["result"]["referencias_pubmed_download_url"])
-        self.assertNotIn("Referências do episódio", (self.root / "brief_spotify_2026-09-04.txt").read_text())
+        self.assertFalse((self.root / "brief_spotify_2026-09-04.txt").exists())
 
     def test_route_forwards_context_setting(self):
         import uuid

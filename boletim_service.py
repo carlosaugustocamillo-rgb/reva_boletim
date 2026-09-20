@@ -1934,7 +1934,10 @@ def rodar_boletim(opcoes=None):
                 except Exception as e:
                     print(f"❌ Erro ao salvar JSON do roteiro: {e}")
 
-            if roteiros_audio and opcoes.get('brief_spotify', True):
+            # An editorial draft still awaits human approval. Its description
+            # would become stale if the user edits the dialogue, so only legacy
+            # scripts can produce a brief at this stage.
+            if roteiros_audio and opcoes.get('brief_spotify', True) and not editorial_draft:
                 yield "🧾 2.8/5: Gerando brief do episódio para Spotify..."
                 brief_spotify_text = gerar_brief_spotify(
                     roteiros_audio=roteiros_audio,
@@ -1967,6 +1970,12 @@ def rodar_boletim(opcoes=None):
                 BASE_DIR, opcoes.get('roteiro_aprovado_id'), opcoes.get('roteiro_aprovado_sha256'),
             )
             roteiros_audio = podcast_editorial.dialogues(editorial_draft)
+            titulos_podcast = [
+                "Abertura",
+                *(study.get("question") or study.get("pmid", "Estudo selecionado")
+                  for study in editorial_draft.get("plan", {}).get("studies", [])),
+                "Encerramento",
+            ]
             audio_canonico = True
         except (ValueError, FileNotFoundError) as error:
             audio_error = f"Revise e aprove o roteiro antes do áudio. {error}"
@@ -2204,6 +2213,24 @@ def rodar_boletim(opcoes=None):
             yield "⚠️ Sem roteiro novo para gerar áudio."
     else:
         yield "⏭️ Pulando geração de Áudio."
+
+    # The Spotify description describes the exact approved dialogue that was
+    # successfully narrated, never an earlier editable draft.
+    if editorial_draft and not audio_error and os.path.isfile(episodio_path) and opcoes.get('brief_spotify', True):
+        yield "🧾 Gerando brief do Spotify a partir do roteiro aprovado..."
+        brief_spotify_text = gerar_brief_spotify(
+            roteiros_audio=roteiros_audio,
+            titulos_estudos=titulos_podcast,
+            data_ref=hoje,
+        ).strip()
+        if brief_spotify_text:
+            with open(brief_spotify_path, "w", encoding="utf-8") as f:
+                f.write(f"Resumo Spotify - RevaCast Weekly ({hoje})\n")
+                f.write("=" * 50 + "\n\n")
+                f.write(brief_spotify_text + "\n")
+            yield "✅ Brief Spotify pronto a partir do roteiro aprovado."
+        else:
+            yield "⚠️ Brief Spotify não foi gerado (texto vazio)."
 
     # ------------------------------------------------------------------
     # 4) MAILCHIMP
