@@ -75,6 +75,21 @@ class RevaMaisEvidenceTest(unittest.TestCase):
         self.assertTrue(readiness["ready"])
         self.assertEqual(evidence[0]["material"], "abstract")
 
+    @patch("revamais_service.enriquecer_referencias_pubmed", side_effect=lambda refs: refs)
+    def test_legacy_citation_labeled_as_abstract_is_downgraded(self, _mock_enrich):
+        citation = "Silva et al. Exercise rehabilitation. Journal, 2024. https://doi.org/10.1000/test"
+        evidence, readiness = service.preparar_evidencias_editoriais([{
+            "texto": citation,
+            "resumo": citation,
+            "evidence_content": citation,
+            "material": "abstract",
+            "doi": "10.1000/test",
+            "fonte": "Consensus",
+        }])
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(evidence[0]["material"], "bibliographic_only")
+        self.assertEqual(evidence[0]["evidence_content"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

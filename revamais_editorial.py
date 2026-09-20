@@ -829,6 +829,30 @@ def restart_audit(base_dir, draft_id, sha256):
         raise RevaMaisEditorialError("A versão mudou. Recarregue antes de tentar novamente.")
     if draft.get("status") not in {"blocked", "needs_revision", "audit_error", "pending_review"}:
         raise RevaMaisEditorialError("Esta versão não pode ser reenviada para auditoria neste estado.")
+    try:
+        # Migra pacotes antigos e tenta recuperar abstracts por DOI/PMID em lote,
+        # sem chamar modelo nem refazer texto ou imagens.
+        from revamais_service import preparar_evidencias_editoriais
+        legacy_references = [
+            {
+                "source_id": source.get("source_id", ""),
+                "pmid": source.get("pmid", ""),
+                "doi": source.get("doi", ""),
+                "texto": source.get("title", ""),
+                "journal": source.get("journal", ""),
+                "tipo_estudo": source.get("study_type", ""),
+                "material": source.get("material", ""),
+                "evidence_content": source.get("content", ""),
+                "link": source.get("link", ""),
+                "fonte": "PubMed" if source.get("pmid") else "Consensus",
+            }
+            for source in draft.get("evidence", [])
+        ]
+        refreshed, readiness = preparar_evidencias_editoriais(legacy_references)
+        draft["evidence"] = evidence_packet(refreshed)
+        draft["evidence_readiness"] = readiness
+    except Exception as error:
+        print(f"⚠️ Não foi possível atualizar o pacote evidencial antes da auditoria: {error}")
     draft.pop("manual_override", None)
     draft["status"] = "auditing"
     draft["audit"] = {

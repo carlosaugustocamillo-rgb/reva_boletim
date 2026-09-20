@@ -559,6 +559,19 @@ def preparar_evidencias_editoriais(referencias, relatorio_consensus=None):
                 or summary.startswith(citation[:min(140, len(citation))])
             )
         )
+        looks_mixed = bool(re.search(
+            r"\b(immediate response|emergency magnet protocol|post-event clearance)\b",
+            f"{citation} {summary}",
+            flags=re.IGNORECASE,
+        ))
+        if looks_mixed:
+            material = "invalid_or_mixed"
+            summary = ""
+            item["exclude_from_bibliography"] = True
+        elif material == "abstract" and looks_like_citation:
+            # Migra pacotes antigos nos quais a própria citação foi salva como abstract.
+            material = "bibliographic_only"
+            summary = ""
         if not material:
             if str(item.get("fonte") or "").lower() == "pubmed" and summary:
                 material = "abstract"
