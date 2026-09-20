@@ -118,7 +118,7 @@ class RevaMaisEditorialTest(unittest.TestCase):
         approved = editorial.approve_draft(self.base_dir, draft["id"], draft["sha256"])
         self.assertEqual(approved["status"], "approved")
 
-    def test_invalid_support_quote_becomes_blocking(self):
+    def test_invalid_support_quote_requires_revision_without_safety_block(self):
         draft = editorial.create_draft(self.base_dir, sample_result())
 
         def invalid_audit(_payload):
@@ -127,8 +127,8 @@ class RevaMaisEditorialTest(unittest.TestCase):
             return value
 
         blocked = editorial.audit_draft(self.base_dir, draft["id"], None, audit_fn=invalid_audit)
-        self.assertEqual(blocked["status"], "blocked")
-        self.assertTrue(any(issue["severity"] == "blocking" for issue in blocked["audit"]["issues"]))
+        self.assertEqual(blocked["status"], "needs_revision")
+        self.assertTrue(any(issue["severity"] == "needs_revision" for issue in blocked["audit"]["issues"]))
 
     def test_admin_can_explicitly_override_a_failed_audit_and_approve_it(self):
         draft = editorial.create_draft(self.base_dir, sample_result())
@@ -166,9 +166,46 @@ class RevaMaisEditorialTest(unittest.TestCase):
             audit_fn=lambda _payload: {"issues": [], "claims": [], "appraisals": []},
         )
         reasons = " ".join(issue["reason"] for issue in blocked["audit"]["issues"])
-        self.assertEqual(blocked["status"], "blocked")
+        self.assertEqual(blocked["status"], "audit_error")
         self.assertIn("nenhuma afirmação", reasons)
         self.assertIn("não foram conferidos", reasons)
+
+    def test_dangerous_incompatibility_remains_a_hard_block(self):
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        audit = passing_audit({})
+        audit["issues"] = [{
+            "severity": "hard_block",
+            "location": "Orientação de segurança",
+            "reason": "A recomendação contradiz a fonte e pode causar dano.",
+        }]
+        blocked = editorial.audit_draft(
+            self.base_dir, draft["id"], None, audit_fn=lambda _payload: audit,
+        )
+        self.assertEqual(blocked["status"], "blocked")
+        self.assertFalse(editorial.review_payload(blocked)["can_approve"])
+
+    def test_auto_repair_is_opt_in_and_limited_to_one_attempt_per_version(self):
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        audit = passing_audit({})
+        audit["issues"] = [{
+            "severity": "needs_revision",
+            "location": "Abertura",
+            "reason": "Reduzir a certeza da afirmação.",
+        }]
+        revision = editorial.audit_draft(
+            self.base_dir, draft["id"], None, audit_fn=lambda _payload: audit,
+        )
+        repairing = editorial.start_auto_repair(
+            self.base_dir, revision["id"], revision["sha256"],
+        )
+        self.assertEqual(repairing["status"], "repairing")
+        self.assertEqual(repairing["repair_attempts"], 1)
+        repairing["status"] = "needs_revision"
+        editorial.save_draft(self.base_dir, repairing)
+        with self.assertRaises(editorial.RevaMaisEditorialError):
+            editorial.start_auto_repair(
+                self.base_dir, repairing["id"], repairing["sha256"],
+            )
 
     def test_text_edit_creates_child_revision_and_rebuilds_email_preview(self):
         previous = self.create_audited()

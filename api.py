@@ -51,6 +51,10 @@ class ReferenciaSelecionadaInput(BaseModel):
     tipo_estudo: str = ""
     achado_principal: str = ""
     consensus_claim: str = ""
+    material: str = ""
+    evidence_content: str = ""
+    source_id: str = ""
+    exclude_from_bibliography: bool = False
 
 class NewsPayload(BaseModel):
     draft_id: str
@@ -810,6 +814,32 @@ def retry_revamais_audit(draft_id: str, payload: RevaMaisDraftVersionInput, back
         draft = revamais_editorial.restart_audit(BASE_DATA_DIR, draft_id, payload.sha256)
         from revamais_service import client as revamais_client
         background_tasks.add_task(revamais_editorial.audit_draft, BASE_DATA_DIR, draft["id"], revamais_client)
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/corrigir-automaticamente")
+def auto_repair_revamais_draft(
+    draft_id: str,
+    payload: RevaMaisDraftVersionInput,
+    background_tasks: BackgroundTasks,
+    request: Request,
+):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.start_auto_repair(
+            BASE_DATA_DIR, draft_id, payload.sha256
+        )
+        from revamais_service import client as revamais_client
+        background_tasks.add_task(
+            revamais_editorial.repair_and_audit,
+            BASE_DATA_DIR,
+            draft["id"],
+            revamais_client,
+        )
         return revamais_editorial.review_payload(draft)
     except FileNotFoundError:
         return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
