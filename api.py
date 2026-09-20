@@ -789,6 +789,20 @@ def override_revamais_audit_block(draft_id: str, payload: RevaMaisDraftOverrideI
         return JSONResponse(status_code=409, content={"error": str(error)})
 
 
+@app.post("/revamais-rascunho/{draft_id}/tentar-auditoria-novamente")
+def retry_revamais_audit(draft_id: str, payload: RevaMaisDraftVersionInput, background_tasks: BackgroundTasks, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.restart_audit(BASE_DATA_DIR, draft_id, payload.sha256)
+        from revamais_service import client as revamais_client
+        background_tasks.add_task(revamais_editorial.audit_draft, BASE_DATA_DIR, draft["id"], revamais_client)
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
 @app.post("/revamais-rascunho/{draft_id}/agendamento")
 def schedule_revamais_draft(draft_id: str, payload: RevaMaisDraftScheduleInput, request: Request):
     require_revamais_admin(request)

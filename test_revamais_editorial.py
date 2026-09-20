@@ -139,6 +139,17 @@ class RevaMaisEditorialTest(unittest.TestCase):
         approved = editorial.approve_draft(self.base_dir, released["id"], released["sha256"])
         self.assertEqual(approved["status"], "approved")
 
+    def test_failed_audit_can_be_retried_without_regenerating_content(self):
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        blocked = editorial.audit_draft(
+            self.base_dir, draft["id"], None,
+            audit_fn=lambda _payload: {"issues": [], "claims": [], "appraisals": []},
+        )
+        restarted = editorial.restart_audit(self.base_dir, blocked["id"], blocked["sha256"])
+        self.assertEqual(restarted["status"], "auditing")
+        self.assertEqual(restarted["content"]["title"], blocked["content"]["title"])
+        self.assertIn("Nova conferência", restarted["audit"]["issues"][0]["reason"])
+
     def test_incomplete_audit_cannot_skip_claims_or_source_appraisal(self):
         draft = editorial.create_draft(self.base_dir, sample_result())
         blocked = editorial.audit_draft(

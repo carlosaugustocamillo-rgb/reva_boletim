@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 VERSION = "revamais-editorial-1"
 DEFAULT_MODEL = os.environ.get("REVAMAIS_AUDIT_MODEL", "gpt-6-astra").strip()
+AUDIT_MAX_COMPLETION_TOKENS = int(os.environ.get("REVAMAIS_AUDIT_MAX_COMPLETION_TOKENS", "16000"))
 CONTENT_START = "<!-- REVAMAIS_CONTENT_START -->"
 CONTENT_END = "<!-- REVAMAIS_CONTENT_END -->"
 
@@ -482,18 +483,32 @@ def _audit_request(client, model, payload, usage):
             "type": "json_schema",
             "json_schema": {"name": "revamais_audit", "strict": True, "schema": AUDIT_SCHEMA},
         },
-        max_completion_tokens=10000,
+        max_completion_tokens=AUDIT_MAX_COMPLETION_TOKENS,
     )
     choice = response.choices[0] if response.choices else None
-    if not choice or choice.finish_reason != "stop" or getattr(choice.message, "refusal", None):
-        raise RevaMaisEditorialError("A auditoria foi recusada ou retornou incompleta.")
+    if not choice:
+        raise RevaMaisEditorialError("A API de auditoria não retornou nenhuma escolha.")
+    refusal = str(getattr(choice.message, "refusal", "") or "").strip()
+    if refusal:
+        raise RevaMaisEditorialError(f"O modelo recusou a auditoria: {refusal[:500]}")
+    finish_reason = str(getattr(choice, "finish_reason", "") or "")
+    if finish_reason != "stop":
+        raise RevaMaisEditorialError(
+            f"A auditoria terminou antes de concluir o JSON (finish_reason={finish_reason or 'desconhecido'})."
+        )
+    raw_content = str(getattr(choice.message, "content", "") or "").strip()
+    if not raw_content:
+        raise RevaMaisEditorialError("A auditoria terminou sem conteúdo JSON.")
     usage.append({
         "stage": "audit",
         "model": getattr(response, "model", model),
         "input_tokens": getattr(response.usage, "prompt_tokens", 0),
         "output_tokens": getattr(response.usage, "completion_tokens", 0),
     })
-    return json.loads(choice.message.content)
+    try:
+        return json.loads(raw_content)
+    except json.JSONDecodeError as error:
+        raise RevaMaisEditorialError("A auditoria retornou JSON inválido.") from error
 
 
 def _validate_audit(audit, evidence):
@@ -644,6 +659,29 @@ def audit_draft(base_dir, draft_id, client, model=None, audit_fn=None):
     draft["status"] = "blocked" if any(
         issue.get("severity") == "blocking" for issue in draft["audit"]["issues"]
     ) else "pending_review"
+    save_draft(base_dir, draft)
+    return draft
+
+
+def restart_audit(base_dir, draft_id, sha256):
+    """Put a non-final draft back in the audit queue after a transient failure."""
+    draft = load_draft(base_dir, draft_id)
+    if draft.get("sha256") != sha256:
+        raise RevaMaisEditorialError("A versão mudou. Recarregue antes de tentar novamente.")
+    if draft.get("status") not in {"blocked", "pending_review"}:
+        raise RevaMaisEditorialError("Esta versão não pode ser reenviada para auditoria neste estado.")
+    draft.pop("manual_override", None)
+    draft["status"] = "auditing"
+    draft["audit"] = {
+        "issues": [{
+            "severity": "blocking",
+            "location": "Auditoria científica",
+            "reason": "Nova conferência científica solicitada.",
+        }],
+        "claims": [],
+        "appraisals": [],
+        "coverage": (draft.get("audit") or {}).get("coverage", {}),
+    }
     save_draft(base_dir, draft)
     return draft
 
