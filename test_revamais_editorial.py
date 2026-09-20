@@ -123,6 +123,22 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertEqual(blocked["status"], "blocked")
         self.assertTrue(any(issue["severity"] == "blocking" for issue in blocked["audit"]["issues"]))
 
+    def test_admin_can_explicitly_override_a_failed_audit_and_approve_it(self):
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        blocked = editorial.audit_draft(
+            self.base_dir, draft["id"], None,
+            audit_fn=lambda _payload: {"issues": [], "claims": [], "appraisals": []},
+        )
+        released = editorial.override_audit_block(
+            self.base_dir, blocked["id"], blocked["sha256"],
+            "As fontes foram revisadas manualmente pela equipe editorial.",
+        )
+        self.assertEqual(released["status"], "pending_review")
+        self.assertTrue(editorial.review_payload(released)["can_approve"])
+        self.assertIn("manualmente", released["manual_override"]["reason"])
+        approved = editorial.approve_draft(self.base_dir, released["id"], released["sha256"])
+        self.assertEqual(approved["status"], "approved")
+
     def test_incomplete_audit_cannot_skip_claims_or_source_appraisal(self):
         draft = editorial.create_draft(self.base_dir, sample_result())
         blocked = editorial.audit_draft(
@@ -175,6 +191,34 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertEqual(len(science["versions"]), 2)
         self.assertEqual(opening["url"], "https://example.com/opening.png")
         self.assertIn("science-v2.png", updated["content"]["html_content"])
+
+    def test_schedule_edit_creates_approved_child_and_updates_visible_date(self):
+        source = sample_result()
+        source["data_publicacao"] = "20/09/2026"
+        source["data_iso"] = "2026-09-20T12:00:00+00:00"
+        source["html_content"] += "<p>Edição de 20/09/2026.</p>"
+        source["html_full"] = source["html_full"].replace(
+            "<!-- REVAMAIS_CONTENT_END -->", "<p>Edição de 20/09/2026.</p><!-- REVAMAIS_CONTENT_END -->"
+        )
+        draft = editorial.create_draft(self.base_dir, source)
+        audited = editorial.audit_draft(self.base_dir, draft["id"], None, audit_fn=passing_audit)
+        approved = editorial.approve_draft(self.base_dir, audited["id"], audited["sha256"])
+        updated = editorial.save_schedule_draft(
+            self.base_dir, approved["id"], approved["sha256"], "2026-10-01T09:30:00-03:00"
+        )
+        self.assertEqual(updated["status"], "approved")
+        self.assertEqual(updated["metadata"]["data_publicacao"], "01/10/2026")
+        self.assertIn("01/10/2026", updated["content"]["html_content"])
+        self.assertNotIn("20/09/2026", updated["content"]["html_content"])
+
+    def test_list_drafts_returns_only_latest_revision_for_each_edition(self):
+        previous = self.create_audited()
+        editorial.save_schedule_draft(
+            self.base_dir, previous["id"], previous["sha256"], "2026-10-01T09:30:00-03:00"
+        )
+        rows = editorial.list_drafts(self.base_dir)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["metadata"]["data_publicacao"], "01/10/2026")
 
     def test_unapproved_revision_cannot_be_published(self):
         draft = editorial.create_draft(self.base_dir, sample_result())

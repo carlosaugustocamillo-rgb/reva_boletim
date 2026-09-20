@@ -645,6 +645,14 @@ class RevaMaisDraftVersionInput(BaseModel):
     sha256: str
 
 
+class RevaMaisDraftOverrideInput(RevaMaisDraftVersionInput):
+    reason: str
+
+
+class RevaMaisDraftScheduleInput(RevaMaisDraftVersionInput):
+    schedule_time: str
+
+
 class RevaMaisRegenerateAssetInput(BaseModel):
     sha256: str
     instruction: str = ""
@@ -656,6 +664,7 @@ class RevaMaisFinalizeInput(BaseModel):
     criar_whatsapp: bool = True
     schedule_time: str | None = None
     site_url: str | None = None
+    force_new_email_campaign: bool = False
 
 @app.post("/iniciar-revamais")
 def iniciar_revamais(
@@ -717,6 +726,12 @@ def get_revamais_draft(draft_id: str, request: Request):
         return JSONResponse(status_code=400, content={"error": str(error)})
 
 
+@app.get("/revamais-rascunhos")
+def list_revamais_drafts(request: Request, limit: int = 80):
+    require_revamais_admin(request)
+    return {"drafts": revamais_editorial.list_drafts(BASE_DATA_DIR, limit=limit)}
+
+
 @app.post("/revamais-rascunho/{draft_id}/editar")
 def edit_revamais_draft(
     draft_id: str,
@@ -753,6 +768,34 @@ def approve_revamais_draft(draft_id: str, payload: RevaMaisDraftVersionInput, re
     require_revamais_admin(request)
     try:
         draft = revamais_editorial.approve_draft(BASE_DATA_DIR, draft_id, payload.sha256)
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/liberar-bloqueio")
+def override_revamais_audit_block(draft_id: str, payload: RevaMaisDraftOverrideInput, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.override_audit_block(
+            BASE_DATA_DIR, draft_id, payload.sha256, payload.reason
+        )
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/agendamento")
+def schedule_revamais_draft(draft_id: str, payload: RevaMaisDraftScheduleInput, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.save_schedule_draft(
+            BASE_DATA_DIR, draft_id, payload.sha256, payload.schedule_time
+        )
         return revamais_editorial.review_payload(draft)
     except FileNotFoundError:
         return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
@@ -809,6 +852,7 @@ def finalize_revamais_draft(draft_id: str, payload: RevaMaisFinalizeInput, reque
             schedule_time=payload.schedule_time,
             site_url=payload.site_url,
             previous_publication=draft.get("publication_progress"),
+            force_new_email_campaign=payload.force_new_email_campaign,
         )
         progress_draft = revamais_editorial.save_publication_progress(
             BASE_DATA_DIR,

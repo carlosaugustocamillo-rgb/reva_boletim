@@ -15,6 +15,7 @@ import re
 import unicodedata
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
@@ -289,6 +290,43 @@ def load_draft(base_dir, draft_id):
     if draft.get("sha256") != fingerprint(draft):
         raise RevaMaisEditorialError("O rascunho foi alterado fora do fluxo editorial. Gere uma nova versão.")
     return draft
+
+
+def list_drafts(base_dir, limit=80):
+    """Return only the latest revision of each Reva+ editorial lineage."""
+    directory = Path(base_dir) / "revamais_editorial"
+    if not directory.exists():
+        return []
+    records = []
+    for path in directory.glob("*.json"):
+        try:
+            records.append(load_draft(base_dir, path.stem))
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    parent_ids = {item.get("parent_id") for item in records if item.get("parent_id")}
+    latest = [item for item in records if item.get("id") not in parent_ids]
+    latest.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return [draft_summary(item) for item in latest[:max(1, min(int(limit or 80), 200))]]
+
+
+def draft_summary(draft):
+    metadata = draft.get("metadata") or {}
+    publication = draft.get("publication") or draft.get("publication_progress") or {}
+    return {
+        "id": draft.get("id"),
+        "sha256": draft.get("sha256"),
+        "title": (draft.get("content") or {}).get("title", "Reva+"),
+        "status": draft.get("status"),
+        "created_at": draft.get("created_at"),
+        "published_at": draft.get("published_at"),
+        "metadata": {
+            "tema": metadata.get("tema"),
+            "data_publicacao": metadata.get("data_publicacao"),
+            "data_iso": metadata.get("data_iso"),
+        },
+        "mailchimp_campaign_id": publication.get("campaign_id"),
+        "email_scheduled": bool(publication.get("email_scheduled")),
+    }
 
 
 def create_draft(base_dir, result, source_task_id=None):
@@ -623,6 +661,9 @@ def _new_revision(previous, *, content=None, visual_assets=None, status="auditin
         "visual_assets": copy.deepcopy(visual_assets if visual_assets is not None else previous["visual_assets"]),
         "evidence": copy.deepcopy(previous["evidence"]),
         "audit": copy.deepcopy(previous["audit"]),
+        "publication_progress": copy.deepcopy(
+            previous.get("publication_progress") or previous.get("publication") or {}
+        ),
         "visual_review_required": True,
         "usage": [],
     }
@@ -702,13 +743,79 @@ def save_regenerated_asset(base_dir, draft_id, sha256, asset_id, new_url, new_pr
     return draft
 
 
+def override_audit_block(base_dir, draft_id, sha256, reason):
+    """Allow an administrator to assume responsibility for a failed audit.
+
+    The original blocking findings remain in the record; the override is explicit
+    and is intentionally invalidated by any later editorial edit.
+    """
+    draft = load_draft(base_dir, draft_id)
+    if draft.get("sha256") != sha256:
+        raise RevaMaisEditorialError("A versão mudou. Recarregue antes de liberar o bloqueio.")
+    if draft.get("status") != "blocked":
+        raise RevaMaisEditorialError("Somente uma versão bloqueada pode receber liberação manual.")
+    reason = _clean(reason)
+    if len(reason) < 12:
+        raise RevaMaisEditorialError("Descreva em ao menos 12 caracteres por que este bloqueio pode ser aceito.")
+    draft["manual_override"] = {
+        "reason": reason,
+        "created_at": _utc_now(),
+        "blocking_issues": copy.deepcopy([
+            item for item in draft.get("audit", {}).get("issues", [])
+            if item.get("severity") == "blocking"
+        ]),
+    }
+    draft["status"] = "pending_review"
+    save_draft(base_dir, draft)
+    return draft
+
+
+def _schedule_values(schedule_time):
+    raw = _clean(schedule_time).replace("Z", "+00:00")
+    if not raw:
+        raise RevaMaisEditorialError("Escolha uma data e horário válidos para o Reva+.")
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError as error:
+        raise RevaMaisEditorialError("A data de agendamento é inválida.") from error
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+    brazil = parsed.astimezone(ZoneInfo("America/Sao_Paulo"))
+    return brazil.strftime("%d/%m/%Y"), brazil.isoformat(), brazil.astimezone(timezone.utc).isoformat()
+
+
+def save_schedule_draft(base_dir, draft_id, sha256, schedule_time):
+    """Create a date-only editorial revision without re-running scientific audit."""
+    previous = load_draft(base_dir, draft_id)
+    if previous.get("sha256") != sha256:
+        raise RevaMaisEditorialError("A versão mudou. Recarregue antes de alterar a data.")
+    new_date, local_iso, utc_iso = _schedule_values(schedule_time)
+    content = copy.deepcopy(previous["content"])
+    old_date = _clean((previous.get("metadata") or {}).get("data_publicacao"))
+    if old_date and old_date != new_date:
+        for key in ("html_content", "html_full"):
+            content[key] = str(content.get(key) or "").replace(old_date, new_date)
+    status = "approved" if previous.get("status") in {"approved", "published"} else previous.get("status", "pending_review")
+    draft = _new_revision(previous, content=content, status=status)
+    draft["metadata"]["data_publicacao"] = new_date
+    draft["metadata"]["data_iso"] = utc_iso
+    draft["metadata"]["data_local_iso"] = local_iso
+    draft["schedule_updated_at"] = _utc_now()
+    if status == "approved":
+        draft["approved_at"] = previous.get("approved_at") or previous.get("published_at") or _utc_now()
+        draft["approval_inherited_for_schedule"] = True
+        draft["visual_review_required"] = False
+    save_draft(base_dir, draft)
+    return draft
+
+
 def approve_draft(base_dir, draft_id, sha256):
     draft = load_draft(base_dir, draft_id)
     if draft.get("sha256") != sha256:
         raise RevaMaisEditorialError("Esta não é a versão exibida. Recarregue antes de aprovar.")
     if draft.get("status") != "pending_review":
         raise RevaMaisEditorialError("A versão precisa concluir a auditoria sem bloqueios antes da aprovação.")
-    if any(issue.get("severity") == "blocking" for issue in draft.get("audit", {}).get("issues", [])):
+    if any(issue.get("severity") == "blocking" for issue in draft.get("audit", {}).get("issues", [])) and not draft.get("manual_override"):
         raise RevaMaisEditorialError("Há pendências científicas bloqueantes nesta versão.")
     draft["status"] = "approved"
     draft["approved_at"] = _utc_now()
@@ -757,9 +864,14 @@ def review_payload(draft):
         "evidence": evidence,
         "audit": copy.deepcopy(draft.get("audit", {})),
         "usage": copy.deepcopy(draft.get("usage", [])),
+        "publication": copy.deepcopy(draft.get("publication") or draft.get("publication_progress") or {}),
+        "manual_override": copy.deepcopy(draft.get("manual_override")),
         "visual_review_required": bool(draft.get("visual_review_required")),
-        "can_approve": draft.get("status") == "pending_review" and not any(
-            issue.get("severity") == "blocking" for issue in draft.get("audit", {}).get("issues", [])
+        "can_approve": draft.get("status") == "pending_review" and (
+            bool(draft.get("manual_override")) or not any(
+                issue.get("severity") == "blocking" for issue in draft.get("audit", {}).get("issues", [])
+            )
         ),
+        "can_override": draft.get("status") == "blocked",
         "parent_id": draft.get("parent_id"),
     }

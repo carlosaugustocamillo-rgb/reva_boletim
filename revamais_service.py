@@ -2729,6 +2729,7 @@ def finalizar_publicacao_revamais(
     schedule_time=None,
     site_url=None,
     previous_publication=None,
+    force_new_email_campaign=False,
 ):
     """Cria integrações externas de forma retomável para uma revisão aprovada."""
     content = draft.get("content") or {}
@@ -2742,6 +2743,20 @@ def finalizar_publicacao_revamais(
     result.setdefault("whatsapp_created", False)
     result.setdefault("calendar_completed", False)
     errors = []
+
+    if force_new_email_campaign and publicar_email:
+        previous_campaign = result.get("campaign_id")
+        if previous_campaign:
+            history = list(result.get("mailchimp_submissions") or [])
+            history.append({
+                "campaign_id": previous_campaign,
+                "email_scheduled": bool(result.get("email_scheduled")),
+                "replaced_at": datetime.now().isoformat(),
+            })
+            result["mailchimp_submissions"] = history
+        result["campaign_id"] = None
+        result["email_content_set"] = False
+        result["email_scheduled"] = False
 
     if publicar_email:
         if not html_email:
