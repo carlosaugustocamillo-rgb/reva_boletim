@@ -39,11 +39,17 @@ def _openai_chat_model_from_env(env_name, default_model):
     return model_name
 
 
-OPENAI_TEXT_MODEL = _openai_chat_model_from_env("OPENAI_TEXT_MODEL", "gpt-5.5")
-OPENAI_TEXT_MODEL_SEARCH = _openai_chat_model_from_env("OPENAI_TEXT_MODEL_SEARCH", OPENAI_TEXT_MODEL)
+OPENAI_TEXT_MODEL = _openai_chat_model_from_env("OPENAI_TEXT_MODEL", "gpt-5.6-sol")
+OPENAI_TEXT_MODEL_SEARCH = _openai_chat_model_from_env("OPENAI_TEXT_MODEL_SEARCH", "gpt-5.6-terra")
 OPENAI_TEXT_MODEL_WRITE = _openai_chat_model_from_env("OPENAI_TEXT_MODEL_WRITE", OPENAI_TEXT_MODEL)
-OPENAI_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2").strip()
+OPENAI_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-2.5-flare").strip()
 OPENAI_IMAGE_QUALITY = os.environ.get("OPENAI_IMAGE_QUALITY", "high").strip()
+OPENAI_IMAGE_REGENERATION_MODEL = os.environ.get(
+    "OPENAI_IMAGE_REGENERATION_MODEL", "gpt-image-2.5-sunburst"
+).strip()
+OPENAI_IMAGE_REGENERATION_QUALITY = os.environ.get(
+    "OPENAI_IMAGE_REGENERATION_QUALITY", "xhigh"
+).strip()
 OPENAI_IMAGE_TIMEOUT_SECONDS = int(os.environ.get("OPENAI_IMAGE_TIMEOUT_SECONDS", "180"))
 OPENAI_IMAGE_ENABLED = True
 
@@ -834,6 +840,8 @@ def gerar_imagem(
     log_callback=None,
     image_size="1024x1024",
     target_aspect_ratio=None,
+    image_model=None,
+    image_quality=None,
 ):
     """
     Gera imagem via OpenAI e usa Gemini apenas como fallback técnico.
@@ -862,18 +870,20 @@ def gerar_imagem(
     
     global OPENAI_IMAGE_ENABLED
     image_generated = False
+    image_model = str(image_model or OPENAI_IMAGE_MODEL).strip()
+    image_quality = str(image_quality or OPENAI_IMAGE_QUALITY).strip()
 
     # Tenta OpenAI primeiro (GPT Image / ChatGPT image stack)
     if OPENAI_IMAGE_ENABLED:
         try:
             emit_log(
-                f"   ☁️ Solicitando imagem à OpenAI ({OPENAI_IMAGE_MODEL}, size={image_size}, quality={OPENAI_IMAGE_QUALITY}, timeout={OPENAI_IMAGE_TIMEOUT_SECONDS}s)..."
+                f"   ☁️ Solicitando imagem à OpenAI ({image_model}, size={image_size}, quality={image_quality}, timeout={OPENAI_IMAGE_TIMEOUT_SECONDS}s)..."
             )
             response = client.images.generate(
-                model=OPENAI_IMAGE_MODEL,
+                model=image_model,
                 prompt=prompt,
                 size=image_size,
-                quality=OPENAI_IMAGE_QUALITY,
+                quality=image_quality,
                 output_format="png",
                 timeout=OPENAI_IMAGE_TIMEOUT_SECONDS,
             )
@@ -883,25 +893,25 @@ def gerar_imagem(
                     with open(temp_filename, "wb") as f:
                         f.write(base64.b64decode(image_data.b64_json))
                     image_generated = True
-                    emit_log(f"   ✅ Imagem gerada com OpenAI ({OPENAI_IMAGE_MODEL}).")
+                    emit_log(f"   ✅ Imagem gerada com OpenAI ({image_model}).")
                 elif getattr(image_data, "url", None):
                     img_data = requests.get(image_data.url, timeout=60).content
                     with open(temp_filename, "wb") as f:
                         f.write(img_data)
                     image_generated = True
-                    emit_log(f"   ✅ Imagem gerada com OpenAI ({OPENAI_IMAGE_MODEL}) via URL.")
+                    emit_log(f"   ✅ Imagem gerada com OpenAI ({image_model}) via URL.")
                 else:
-                    emit_log(f"   ⚠️ OpenAI ({OPENAI_IMAGE_MODEL}) não retornou imagem utilizável. Tentando fallback.")
+                    emit_log(f"   ⚠️ OpenAI ({image_model}) não retornou imagem utilizável. Tentando fallback.")
         except Exception as e:
             error_text = str(e)
             if "billing_hard_limit_reached" in error_text or "Billing hard limit has been reached" in error_text:
                 OPENAI_IMAGE_ENABLED = False
                 emit_log(
-                    f"   ⚠️ OpenAI Imagem indisponível por limite de billing ({OPENAI_IMAGE_MODEL}). "
+                    f"   ⚠️ OpenAI Imagem indisponível por limite de billing ({image_model}). "
                     "As próximas imagens desta execução usarão Gemini diretamente."
                 )
             else:
-                emit_log(f"   ⚠️ Erro OpenAI Imagem ({OPENAI_IMAGE_MODEL}): {e}")
+                emit_log(f"   ⚠️ Erro OpenAI Imagem ({image_model}): {e}")
     else:
         emit_log(
             f"   ⏩ OpenAI Imagem desativada nesta execução após erro de billing. Usando Gemini para ({nome_arquivo_prefixo})."
@@ -1115,11 +1125,12 @@ def gerar_conteudo_revamais(tema, referencias, relatorio_consensus=None):
     
     Tema: "{tema}"
     
-    INSTRUÇÃO DE ESCRITA HÍBRIDA (Conhecimento Geral + Evidência Específica):
+    INSTRUÇÃO DE ESCRITA BASEADA NAS EVIDÊNCIAS FORNECIDAS:
     
-    1. **Contexto e Mecanismo (Use seu conhecimento médico geral)**:
+    1. **Contexto e Mecanismo**:
        - Comece explicando o problema de forma empática (ex: "Você sente dor ao caminhar?").
-       - Explique O PORQUÊ (Fisiologia/Mecanismo): Por que isso acontece? O que muda no corpo com o tratamento? (Ex: fale sobre circulação colateral, eficiência muscular, neuroplasticidade).
+       - Explique O PORQUÊ apenas quando o mecanismo estiver sustentado pelo relatório ou pelos resumos fornecidos.
+       - Se o mecanismo não estiver documentado nas fontes, simplifique a explicação em vez de completar com conhecimento externo.
        - O usuário GOSTA dessa explicação educativa do "como funciona".
     
     2. **O Que a Ciência Diz (Baseado SOMENTE nas fontes científicas fornecidas abaixo)**:
@@ -1133,6 +1144,7 @@ def gerar_conteudo_revamais(tema, referencias, relatorio_consensus=None):
     REGRAS DE SEGURANÇA E FIDELIDADE:
     - Não invente números, magnitude de efeito, tempo de intervenção, perfil de pacientes ou conclusões.
     - Não cite estudos que não estejam no material evidencial abaixo ou na lista de referências abaixo.
+    - Toda afirmação clínica verificável, inclusive na introdução, mecanismo e dicas, precisa decorrer das fontes fornecidas.
     - Se um detalhe não estiver explícito no relatório ou nos resumos, não mencione esse detalhe.
     - Se a evidência parecer preliminar, heterogênea ou limitada, diga isso com cautela.
     - Use linguagem prudente: "sugere", "indica", "aponta", "pode ajudar", quando apropriado.
@@ -1150,8 +1162,8 @@ def gerar_conteudo_revamais(tema, referencias, relatorio_consensus=None):
     IMPORTANTE: NÃO USE MARKDOWN (```html ... ```). Retorne APENAS o código HTML cru.
     
     1. <h1>Título Atraente e Emocional</h1>
-    2. <p>Introdução empática + Explicação do Mecanismo (Por que dói? Por que melhora? - Use conhecimento geral de fisiologia).</p>
-    3. <h2>O que a Ciência Comprova?</h2> (Abra com uma síntese geral e depois traga bullets temáticos integrando os estudos, conectando com a explicação).
+    2. <p>Introdução empática + explicação educativa sustentada pelas fontes fornecidas.</p>
+    3. <h2>O que as evidências mostram?</h2> (Abra com uma síntese geral e depois traga bullets temáticos integrando os estudos, conectando com a explicação).
     4. <h2>Dicas Práticas</h2> (Conselhos acionáveis baseados nos abstracts e boas práticas).
     5. <div class="cta"> (Convite para seguir @revalidatie_londrina).
     
@@ -1260,13 +1272,83 @@ def resumir_texto_para_legenda(texto, max_chars=220):
     return resumo
 
 
+def legenda_repete_texto(legenda, texto_contexto):
+    """Detecta legenda que apenas copia ou parafraseia muito de perto a seção."""
+    legenda_limpa = re.sub(r"\s+", " ", str(legenda or "")).strip().casefold()
+    contexto_limpo = re.sub(r"\s+", " ", str(texto_contexto or "")).strip().casefold()
+    if not legenda_limpa or not contexto_limpo:
+        return False
+    if legenda_limpa in contexto_limpo:
+        return True
+
+    palavras_legenda = re.findall(r"[a-zà-ÿ0-9]+", legenda_limpa)
+    palavras_contexto = re.findall(r"[a-zà-ÿ0-9]+", contexto_limpo)
+    if len(palavras_legenda) < 6:
+        return False
+
+    tamanho = min(6, len(palavras_legenda))
+    sequencias_legenda = {
+        tuple(palavras_legenda[i:i + tamanho])
+        for i in range(len(palavras_legenda) - tamanho + 1)
+    }
+    sequencias_contexto = {
+        tuple(palavras_contexto[i:i + tamanho])
+        for i in range(max(0, len(palavras_contexto) - tamanho + 1))
+    }
+    if sequencias_legenda & sequencias_contexto:
+        return True
+
+    palavras_relevantes = {palavra for palavra in palavras_legenda if len(palavra) > 4}
+    if not palavras_relevantes:
+        return False
+    sobreposicao = palavras_relevantes & set(palavras_contexto[:45])
+    return len(sobreposicao) / len(palavras_relevantes) >= 0.8
+
+
+def normalizar_legenda_visual(legenda, texto_contexto, max_chars=220):
+    """Limita a legenda sem usar o parágrafo seguinte como fallback."""
+    legenda = resumir_texto_para_legenda(legenda, max_chars=max_chars)
+    if legenda_repete_texto(legenda, texto_contexto):
+        return ""
+    return legenda
+
+
+def gerar_legenda_visual_revamais(tema, papel, prompt_visual, texto_contexto):
+    """Uma única tentativa de reparar legenda ausente/repetitiva a partir do visual."""
+    prompt = f"""
+    Escreva uma legenda editorial em português brasileiro para o visual de {papel} de um boletim sobre "{tema}".
+    A legenda deve explicar o significado do visual para o paciente em uma frase curta, sem repetir a abertura,
+    a primeira frase ou uma sequência de palavras do texto da seção. Não use as palavras imagem, figura ou boletim.
+    Não acrescente números, recomendações ou fatos que não estejam no contexto. Retorne somente a legenda.
+
+    CONCEITO VISUAL:
+    {prompt_visual}
+
+    TEXTO QUE NÃO DEVE SER REPETIDO:
+    {texto_contexto[:1800]}
+    """
+    try:
+        legenda = gerar_texto_preferencial(
+            prompt,
+            system_prompt="Você é um editor visual clínico cuidadoso e evita redundância textual.",
+            model_name=OPENAI_TEXT_MODEL_WRITE,
+        )
+        return normalizar_legenda_visual(legenda, texto_contexto)
+    except Exception as error:
+        print(f"⚠️ Falha ao reparar legenda visual ({papel}): {error}")
+        return ""
+
+
 def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     """
     Gera prompts visuais mais ancorados no conteúdo final do boletim.
     """
     titulo_boletim = extrair_titulo_html(html_texto)
     intro_boletim = extrair_intro_html(html_texto)
-    secao_ciencia = extrair_secao_html(html_texto, r"O\s+que\s+a\s+Ci[eê]ncia\s+Comprova\??")
+    secao_ciencia = extrair_secao_html(
+        html_texto,
+        r"O\s+que\s+(?:a\s+Ci[eê]ncia\s+Comprova|as\s+evid[eê]ncias\s+mostram)\??",
+    )
     secao_dicas = extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas")
     texto_limpo = limpar_texto_html(html_texto)
 
@@ -1311,6 +1393,8 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
     - If you are not fully confident that all visible text will be correct PT-BR, request no text.
     - Each "caption_ptbr" must be 1 or 2 short sentences in natural Brazilian Portuguese, self-contained, clear for a patient, and directly explanatory of that visual.
     - Each "caption_ptbr" must not mention "imagem", "figura", "newsletter", "boletim" or the generation process.
+    - A caption must interpret the visual; it must not copy, summarize, or paraphrase the first sentence of the section that follows it.
+    - Do not reuse any sequence of 6 or more words from SCIENCE SECTION or PRACTICAL TIPS SECTION in a caption.
 
     THEME:
     {tema}
@@ -1352,13 +1436,15 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
             and briefs["ciencia"].get("prompt_english")
             and briefs["dicas"].get("prompt_english")
         ):
-            briefs["ciencia"]["caption_ptbr"] = resumir_texto_para_legenda(
-                briefs["ciencia"].get("caption_ptbr") or secao_ciencia,
-                max_chars=220,
+            briefs["ciencia"]["caption_ptbr"] = normalizar_legenda_visual(
+                briefs["ciencia"].get("caption_ptbr"), secao_ciencia
+            ) or gerar_legenda_visual_revamais(
+                tema, "ciência", briefs["ciencia"]["prompt_english"], secao_ciencia
             )
-            briefs["dicas"]["caption_ptbr"] = resumir_texto_para_legenda(
-                briefs["dicas"].get("caption_ptbr") or secao_dicas,
-                max_chars=220,
+            briefs["dicas"]["caption_ptbr"] = normalizar_legenda_visual(
+                briefs["dicas"].get("caption_ptbr"), secao_dicas
+            ) or gerar_legenda_visual_revamais(
+                tema, "dicas práticas", briefs["dicas"]["prompt_english"], secao_dicas
             )
             return briefs
     except Exception as e:
@@ -1388,7 +1474,7 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
                 "If labels are useful, include at most 1 short label in Brazilian Portuguese (PT-BR) only. "
                 "Never use English or mixed language. If text fidelity is uncertain, use no text."
             ),
-            "caption_ptbr": resumir_texto_para_legenda(secao_ciencia, max_chars=220),
+            "caption_ptbr": "",
         },
         "dicas": {
             "prompt_english": (
@@ -1400,7 +1486,7 @@ def gerar_briefs_visuais_revamais(tema, html_texto, referencias):
                 "If labels are useful, include at most 1 short label in Brazilian Portuguese (PT-BR) only. "
                 "Never use English or mixed language. If text fidelity is uncertain, use no text."
             ),
-            "caption_ptbr": resumir_texto_para_legenda(secao_dicas, max_chars=220),
+            "caption_ptbr": "",
         },
     }
 
@@ -1860,6 +1946,7 @@ def preparar_referencias_revamais(tema_usuario=None, quantidade_referencias=8, c
 
     dados_tema = resultado_busca["dados_tema"]
     tema = dados_tema["tema"]
+    calendar_title = tema
     tema_ingles = resultado_busca["tema_ingles"]
     referencias = resultado_busca["referencias"]
 
@@ -1882,6 +1969,7 @@ def preparar_referencias_revamais(tema_usuario=None, quantidade_referencias=8, c
         "tema_ingles": tema_ingles,
         "instagram_format": dados_tema["formato_instagram"],
         "calendar_index": dados_tema.get("calendar_index"),
+        "calendar_title": calendar_title,
         "referencias_sugeridas": referencias,
         "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
         "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
@@ -1963,7 +2051,13 @@ def gerar_conteudo_instagram(tema, formato, referencias_text, conteudo_base=None
             with open(filename, "w", encoding="utf-8") as f: f.write(roteiro)
             url = upload_file(filename, f"instagram/{filename}")
             if os.path.exists(filename): os.remove(filename)
-            assets.append({"type": "roteiro", "url": url, "name": "Roteiro do Reel"})
+            assets.append({
+                "asset_id": "instagram-reel-script",
+                "type": "roteiro",
+                "url": url,
+                "name": "Roteiro do Reel",
+                "content": roteiro,
+            })
             
         elif formato.lower() == "carrossel":
             emit_log("   📝 Planejando narrativa do carrossel...")
@@ -2038,7 +2132,13 @@ SLIDE STRUCTURE:
                 roteiro_carrossel_url = upload_file(roteiro_carrossel_nome, f"instagram/{roteiro_carrossel_nome}")
                 if os.path.exists(roteiro_carrossel_nome):
                     os.remove(roteiro_carrossel_nome)
-                assets.append({"type": "roteiro", "url": roteiro_carrossel_url, "name": "Roteiro do Carrossel"})
+                assets.append({
+                    "asset_id": "instagram-carousel-script",
+                    "type": "roteiro",
+                    "url": roteiro_carrossel_url,
+                    "name": "Roteiro do Carrossel",
+                    "content": "\n".join(linhas_roteiro).strip(),
+                })
             except Exception as e:
                 emit_log(f"⚠️ Erro ao salvar roteiro do carrossel: {e}")
 
@@ -2096,10 +2196,13 @@ SLIDE STRUCTURE:
                 final_url = upload_file(local_filename, f"revamais/slides/{local_base_name}.png")
 
                 assets.append({
+                    "asset_id": f"instagram-slide-{slide_num}",
                     "type": "image", 
                     "url": final_url, 
                     "name": f"Slide {slide_num}: {slide_titulo}",
-                    "texto_base": slide_texto
+                    "texto_base": slide_texto,
+                    "title": slide_titulo,
+                    "prompt": full_prompt,
                 })
 
             # Criar arquivo ZIP com todas as imagens
@@ -2118,7 +2221,12 @@ SLIDE STRUCTURE:
                 zip_url = upload_file(zip_name, f"instagram/{zip_name}")
                 if os.path.exists(zip_name): os.remove(zip_name)
                 
-                assets.append({"type": "zip", "url": zip_url, "name": "Baixar Todas as Imagens (.zip)"})
+                assets.append({
+                    "asset_id": "instagram-carousel-zip",
+                    "type": "zip",
+                    "url": zip_url,
+                    "name": "Baixar Todas as Imagens (.zip)",
+                })
                 
             except Exception as e:
                 emit_log(f"⚠️ Erro ao criar ZIP: {e}")
@@ -2160,7 +2268,7 @@ def criar_campanha_revamais(
     if referencias_selecionadas:
         dados_tema = resolver_tema_revamais(
             tema_usuario=tema_usuario,
-            consumir_tema_auto=(calendar_index is None),
+            consumir_tema_auto=False,
             calendar_index=calendar_index,
         )
         if not dados_tema:
@@ -2169,7 +2277,7 @@ def criar_campanha_revamais(
         resultado_busca = _resolver_tema_com_referencias(
             tema_usuario=tema_usuario,
             quantidade_referencias=8,
-            consumir_tema_auto=(calendar_index is None),
+            consumir_tema_auto=False,
             calendar_index=calendar_index,
             log_callback=log,
         )
@@ -2181,6 +2289,7 @@ def criar_campanha_revamais(
         return {"status": "error", "message": "Nenhum tema fornecido e calendário esgotado/inexistente."}
 
     tema = dados_tema["tema"]
+    calendar_title = tema
     formato_instagram = dados_tema["formato_instagram"]
     is_calendar_source = dados_tema["is_calendar_source"]
             
@@ -2226,6 +2335,10 @@ def criar_campanha_revamais(
     url_corpo_dicas = "https://placehold.co/600x400?text=Infografico+Dicas" # Placeholder default
     legenda_corpo_ciencia = ""
     legenda_corpo_dicas = ""
+    briefs_visuais = {"abertura": {}, "ciencia": {}, "dicas": {}}
+    prompt_ilustrativa = ""
+    prompt_corpo_ciencia = ""
+    prompt_corpo_dicas = ""
 
     check()
     # 4. Gerar Texto
@@ -2245,7 +2358,10 @@ def criar_campanha_revamais(
         legenda_corpo_dicas = str(briefs_visuais.get("dicas", {}).get("caption_ptbr") or "").strip()
 
         log("🎨 Gerando assets visuais (isso pode demorar)...")
-        log(f"🖼️ Modelo principal de imagem: {OPENAI_IMAGE_MODEL} (fallback: {GEMINI_IMAGE_MODEL})")
+        log(
+            f"🖼️ Modelo principal de imagem: {OPENAI_IMAGE_MODEL}; "
+            f"regenerações: {OPENAI_IMAGE_REGENERATION_MODEL} (fallback: {GEMINI_IMAGE_MODEL})"
+        )
         try:
              # 1. Imagem Ilustrativa (Lifestyle/Visual)
             prompt_ilustrativa = briefs_visuais["abertura"]["prompt_english"]
@@ -2272,16 +2388,13 @@ def criar_campanha_revamais(
     else:
         log("⏩ Pulando geração de imagens (opção desmarcada).")
 
-    if not legenda_corpo_ciencia:
-        legenda_corpo_ciencia = resumir_texto_para_legenda(
-            extrair_secao_html(html_texto, r"O\s+que\s+a\s+Ci[eê]ncia\s+Comprova\??"),
-            max_chars=220,
-        )
-    if not legenda_corpo_dicas:
-        legenda_corpo_dicas = resumir_texto_para_legenda(
-            extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas"),
-            max_chars=220,
-        )
+    secao_ciencia = extrair_secao_html(
+        html_texto,
+        r"O\s+que\s+(?:a\s+Ci[eê]ncia\s+Comprova|as\s+evid[eê]ncias\s+mostram)\??",
+    )
+    secao_dicas = extrair_secao_html(html_texto, r"Dicas\s+Pr[aá]ticas")
+    legenda_corpo_ciencia = normalizar_legenda_visual(legenda_corpo_ciencia, secao_ciencia)
+    legenda_corpo_dicas = normalizar_legenda_visual(legenda_corpo_dicas, secao_dicas)
 
     def montar_bloco_imagem(img_url, alt, caption=None):
         caption = str(caption or "").strip()
@@ -2333,14 +2446,14 @@ def criar_campanha_revamais(
         html_texto,
         url_corpo_ciencia,
         legenda_corpo_ciencia,
-        r"O\\s+que\\s+a\\s+Ci[eê]ncia\\s+Comprova\\??",
+        r"O\s+que\s+(?:a\s+Ci[eê]ncia\s+Comprova|as\s+evid[eê]ncias\s+mostram)\??",
         fallback="first_h2",
     )
     html_texto_site = inserir_imagem_educativa(
         html_texto_site,
         url_corpo_dicas,
         legenda_corpo_dicas,
-        r"Dicas\\s+Pr[aá]ticas",
+        r"Dicas\s+Pr[aá]ticas",
         fallback="last_h2",
     )
     html_texto_email = inserir_imagem_abertura(html_texto_site, url_ilustrativa)
@@ -2431,7 +2544,9 @@ def criar_campanha_revamais(
             </div>
             
             <div style="padding: 20px;">
+                <!-- REVAMAIS_CONTENT_START -->
                 {html_texto_email}
+                <!-- REVAMAIS_CONTENT_END -->
                 
                 <div class="cta-box">
                     <p>Quer saber mais sobre como cuidar da sua saúde?</p>
@@ -2458,68 +2573,13 @@ def criar_campanha_revamais(
     """
     
     check()
-    # 7. Mailchimp
-    campaign = {"id": "DRAFT_SKIPPED"}
+    # Publicação externa acontece somente depois da revisão e aprovação explícitas.
+    campaign = {"id": None}
     if enviar_email:
-        try:
-            log("📧 Enviando rascunho para o Mailchimp...")
-            campaign = mc.campaigns.create({
-                "type": "regular",
-                "recipients": {"list_id": MC_LIST_ID},
-                "settings": {
-                    "subject_line": f"Reva +: {tema}",
-                    "title": f"Reva + {datetime.now().strftime('%d/%m')}: {tema}",
-                    "from_name": MC_FROM_NAME,
-                    "reply_to": MC_REPLY_TO
-                }
-            })
-            mc.campaigns.set_content(campaign["id"], {"html": html_email})
-            log(f"✅ Campanha criada com sucesso (Draft): {campaign['id']}")
-            
-            # 8. Agendamento Automático (Só se criou campanha)
-            try:
-                day_name = "Terça-feira" if is_calendar_source else "Domingo"
-                log(f"📅 Tentando agendar envio para próximo(a) {day_name}...")
-                
-                mc.campaigns.schedule(campaign["id"], {"schedule_time": schedule_str})
-                log(f"🕒 Campanha agendada com sucesso para: {schedule_str} (UTC) [07:30 BRT]")
-                
-            except Exception as e:
-                # Muitos planos gratuitos não permitem agendamento via API
-                log(f"⚠️ Falha no agendamento automático (Provável limitação do Plano Free ou Data): {e}")
-                log("ℹ️ A campanha foi salva como RASCUNHO. Por favor, agende manualmente.")
-        except Exception as e:
-            log(f"❌ Erro Mailchimp: {e}")
+        log("📧 E-mail preparado para pré-visualização. O Mailchimp só será criado após a aprovação.")
     else:
-        log("⏩ Pulando envio para Mailchimp (opção desmarcada).")
-
-    # 9. Integração WhatsApp (Novo)
-    try:
-        from whatsapp_service import create_draft
-        
-        def slugify(text):
-            text = text.lower().strip()
-            text = re.sub(r'[^\w\s-]', '', text)
-            text = re.sub(r'[\s_-]+', '-', text)
-            return text
-
-        # Gera link provável (assumindo que será publicado)
-        slug = slugify(tema)
-        # data short: 20251230
-        date_short = datetime.now().strftime('%Y%m%d')
-        probable_link = f"https://www.revalidatie.com.br/news/{slug}-{date_short}"
-        
-        log("📱 Gerando rascunho para WhatsApp...")
-        wa_content = {
-            "title": tema,
-            "summary": f"Confira a nova edição do Reva+ sobre {tema}.",
-            "link": probable_link
-        }
-        draft = create_draft("revamais", wa_content)
-        if draft:
-            log(f"✅ Rascunho WhatsApp criado com sucesso!")
-    except Exception as e_wa:
-         log(f"⚠️ Erro ao gerar rascunho WhatsApp: {e_wa}")
+        log("⏩ E-mail não solicitado para esta edição.")
+    log("📱 WhatsApp aguardará a publicação da versão aprovada.")
 
 
 
@@ -2549,24 +2609,68 @@ def criar_campanha_revamais(
     if "referências científicas utilizadas" not in html_lower and "referencias cientificas utilizadas" not in html_lower:
         html_content_site = html_texto_site + bloco_referencias_site
 
-    if dados_tema.get("calendar_index") is not None:
-        try:
-            marcar_tema_revamais_concluido(
-                dados_tema.get("calendar_index"),
-                titulo_esperado=tema,
-            )
-            log("✅ Item do calendário Reva+ marcado como concluído.")
-        except Exception as e_calendar:
-            log(f"⚠️ Não foi possível marcar o item do calendário como concluído: {e_calendar}")
+    visual_assets = [
+        {
+            "id": "newsletter-opening",
+            "kind": "newsletter_opening",
+            "label": "Capa/abertura do boletim",
+            "url": url_ilustrativa,
+            "prompt": prompt_ilustrativa,
+            "caption": "",
+            "alt_text": "Cena de abertura relacionada ao tema do boletim",
+            "image_size": "1792x1024",
+            "aspect_ratio": [16, 9],
+        },
+        {
+            "id": "newsletter-science",
+            "kind": "newsletter_science",
+            "label": "Visual da seção científica",
+            "url": url_corpo_ciencia,
+            "prompt": prompt_corpo_ciencia,
+            "caption": legenda_corpo_ciencia,
+            "alt_text": "Infográfico educativo da seção científica",
+            "image_size": "1024x1024",
+            "aspect_ratio": [1, 1],
+        },
+        {
+            "id": "newsletter-tips",
+            "kind": "newsletter_tips",
+            "label": "Visual das dicas práticas",
+            "url": url_corpo_dicas,
+            "prompt": prompt_corpo_dicas,
+            "caption": legenda_corpo_dicas,
+            "alt_text": "Infográfico educativo das dicas práticas",
+            "image_size": "1024x1024",
+            "aspect_ratio": [1, 1],
+        },
+    ]
+    visual_assets.extend(
+        {
+            "id": asset.get("asset_id"),
+            "kind": "instagram_slide",
+            "label": asset.get("name") or "Slide do Instagram",
+            "url": asset.get("url"),
+            "prompt": asset.get("prompt") or "",
+            "caption": asset.get("texto_base") or "",
+            "alt_text": asset.get("name") or "Slide do Instagram",
+            "image_size": "1024x1024",
+            "aspect_ratio": [1, 1],
+        }
+        for asset in instagram_assets
+        if asset.get("type") == "image" and asset.get("asset_id")
+    )
 
     return {
         "status": "success", 
-        "campaign_id": campaign['id'], 
+        "campaign_id": campaign['id'],
+        "email_requested": bool(enviar_email),
         "tema": tema,
         "calendar_index": dados_tema.get("calendar_index"),
+        "calendar_title": calendar_title,
         "modelo_texto_busca": OPENAI_TEXT_MODEL_SEARCH,
         "modelo_texto_redacao": OPENAI_TEXT_MODEL_WRITE,
         "modelo_imagem_preferencial": OPENAI_IMAGE_MODEL,
+        "modelo_imagem_regeneracao": OPENAI_IMAGE_REGENERATION_MODEL,
         "modelo_imagem_fallback": GEMINI_IMAGE_MODEL,
         "tema_query_pubmed": tema_ingles,
         "fonte_contexto_principal": "Consensus" if relatorio_consensus else "PubMed",
@@ -2579,6 +2683,7 @@ def criar_campanha_revamais(
         "url_corpo_dicas": url_corpo_dicas,
         "custo_estimado": custo_real,
         "instagram_assets": instagram_assets,
+        "visual_assets": visual_assets,
         "instagram_format": formato_instagram,
         # Campos para Publicação no Site (Novos)
         "titulo": tema,
@@ -2587,6 +2692,115 @@ def criar_campanha_revamais(
         "data_publicacao": delivery_date_formatted,
         "data_iso": schedule_str
     }
+
+
+def regenerar_asset_revamais(asset, instruction="", log_callback=None):
+    """Regenera somente um ativo visual, mantendo texto e demais imagens intactos."""
+    asset = asset or {}
+    prompt_base = str(asset.get("prompt") or "").strip()
+    if not prompt_base:
+        raise ValueError("Este ativo não possui prompt visual reutilizável.")
+    instruction = str(instruction or "").strip()
+    prompt = prompt_base
+    if instruction:
+        prompt += (
+            "\nEDITORIAL REVISION REQUEST: Apply the following user-requested change while preserving "
+            f"clinical coherence and all safety constraints: {instruction}"
+        )
+    asset_id = re.sub(r"[^a-zA-Z0-9_-]", "-", str(asset.get("id") or "asset"))
+    aspect = tuple(asset.get("aspect_ratio") or (1, 1))
+    image_size = str(asset.get("image_size") or "1024x1024")
+    return gerar_imagem(
+        prompt,
+        f"revision_{asset_id}",
+        log_callback=log_callback,
+        image_size=image_size,
+        target_aspect_ratio=aspect,
+        image_model=OPENAI_IMAGE_REGENERATION_MODEL,
+        image_quality=OPENAI_IMAGE_REGENERATION_QUALITY,
+    ), prompt
+
+
+def finalizar_publicacao_revamais(
+    draft,
+    *,
+    publicar_email=False,
+    criar_whatsapp=True,
+    schedule_time=None,
+    site_url=None,
+    previous_publication=None,
+):
+    """Cria integrações externas de forma retomável para uma revisão aprovada."""
+    content = draft.get("content") or {}
+    metadata = draft.get("metadata") or {}
+    tema = str(content.get("title") or metadata.get("tema") or "Reva+").strip()
+    html_email = str(content.get("html_full") or "").strip()
+    result = dict(previous_publication or {})
+    result.setdefault("campaign_id", None)
+    result.setdefault("email_content_set", False)
+    result.setdefault("email_scheduled", False)
+    result.setdefault("whatsapp_created", False)
+    result.setdefault("calendar_completed", False)
+    errors = []
+
+    if publicar_email:
+        if not html_email:
+            raise ValueError("A versão aprovada não contém HTML de e-mail.")
+        try:
+            if not result["campaign_id"]:
+                campaign = mc.campaigns.create({
+                    "type": "regular",
+                    "recipients": {"list_id": MC_LIST_ID},
+                    "settings": {
+                        "subject_line": f"Reva +: {tema}",
+                        "title": f"Reva + {datetime.now().strftime('%d/%m')}: {tema}",
+                        "from_name": MC_FROM_NAME,
+                        "reply_to": MC_REPLY_TO,
+                    },
+                })
+                result["campaign_id"] = campaign["id"]
+            if not result["email_content_set"]:
+                mc.campaigns.set_content(result["campaign_id"], {"html": html_email})
+                result["email_content_set"] = True
+            if schedule_time and not result["email_scheduled"]:
+                mc.campaigns.schedule(result["campaign_id"], {"schedule_time": schedule_time})
+                result["email_scheduled"] = True
+        except Exception as error:
+            errors.append(f"Mailchimp: {error}")
+
+    if criar_whatsapp and not result["whatsapp_created"]:
+        try:
+            from whatsapp_service import create_draft
+
+            link = str(site_url or "").strip()
+            if not link:
+                slug = re.sub(r"[^\w\s-]", "", tema.lower().strip())
+                slug = re.sub(r"[\s_-]+", "-", slug)
+                link = f"https://www.revalidatie.com.br/noticias/{slug}-{datetime.now().strftime('%Y%m%d')}"
+            wa_draft = create_draft("revamais", {
+                "title": tema,
+                "summary": f"Confira a nova edição do Reva+ sobre {tema}.",
+                "link": link,
+            })
+            if not wa_draft:
+                raise RuntimeError("o rascunho não foi confirmado")
+            result["whatsapp_created"] = True
+        except Exception as error:
+            errors.append(f"WhatsApp: {error}")
+
+    calendar_index = metadata.get("calendar_index")
+    if not errors and calendar_index is not None and not result["calendar_completed"]:
+        try:
+            marcar_tema_revamais_concluido(
+                calendar_index,
+                titulo_esperado=metadata.get("calendar_title") or metadata.get("tema") or tema,
+            )
+            result["calendar_completed"] = True
+        except Exception as error:
+            errors.append(f"Calendário: {error}")
+    result["status"] = "partial" if errors else "success"
+    result["errors"] = errors
+    return result
 
 
 if __name__ == "__main__":

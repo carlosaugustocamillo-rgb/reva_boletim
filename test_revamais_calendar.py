@@ -73,6 +73,15 @@ class RevaMaisCalendarSelectionTest(unittest.TestCase):
 
         self.assertEqual(current, 2)
 
+    def test_generation_does_not_consume_calendar_before_publication(self):
+        source = Path("revamais_service.py").read_text(encoding="utf-8")
+        generation = source.split("def criar_campanha_revamais(", 1)[1].split(
+            "def regenerar_asset_revamais(", 1
+        )[0]
+        self.assertNotIn("consumir_tema_auto=(calendar_index is None)", generation)
+        self.assertGreaterEqual(generation.count("consumir_tema_auto=False"), 2)
+        self.assertNotIn("marcar_tema_revamais_concluido(", generation)
+
 
 if __name__ == "__main__":
     unittest.main()

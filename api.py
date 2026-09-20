@@ -1,5 +1,5 @@
 
-from fastapi import FastAPI, BackgroundTasks, Request, Response, UploadFile, File, Form
+from fastapi import FastAPI, BackgroundTasks, Request, Response, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 import base64
@@ -12,13 +12,14 @@ from revamais_service import criar_campanha_revamais
 from simple_agent import run_agent, AgentInput
 from pydantic import BaseModel, Field
 import firebase_admin
-from firebase_admin import credentials, storage
+from firebase_admin import auth as firebase_auth, credentials, firestore, storage
 from datetime import date, datetime
 import re
 from elevenlabs_utils import diagnosticar_erro_elevenlabs
 from connected_papers import build_manual_report, parse_bibtex
 from pubmed_related import PubMedRelatedClient, RelatedConfig, prefilter
 import podcast_editorial
+import revamais_editorial
 from podcast_pdf import PodcastPdfError, save_pdf
 
 def simple_slugify(text):
@@ -52,6 +53,8 @@ class ReferenciaSelecionadaInput(BaseModel):
     consensus_claim: str = ""
 
 class NewsPayload(BaseModel):
+    draft_id: str
+    sha256: str
     titulo: str
     html_content: str
     data_publicacao: str
@@ -97,6 +100,30 @@ import json
 TASK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "tasks")
 os.makedirs(TASK_DIR, exist_ok=True)
 BASE_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+
+
+def require_revamais_admin(request: Request):
+    """Authorize costly/editorial Reva+ mutations with Firebase identity and admin role."""
+    authorization = request.headers.get("authorization", "").strip()
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=401, detail="Token Firebase obrigatório.")
+    if not firebase_admin._apps:
+        raise HTTPException(status_code=503, detail="Firebase indisponível para validar o administrador.")
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        decoded = firebase_auth.verify_id_token(token)
+        uid = str(decoded.get("uid") or "").strip()
+        if not uid:
+            raise ValueError("UID ausente")
+        user_snapshot = firestore.client().collection("users").document(uid).get()
+        user_data = user_snapshot.to_dict() if user_snapshot.exists else {}
+        if user_data.get("role") != "admin":
+            raise HTTPException(status_code=403, detail="Apenas administradores podem revisar e publicar o Reva+.")
+        return uid
+    except HTTPException:
+        raise
+    except Exception as error:
+        raise HTTPException(status_code=401, detail="Token Firebase inválido ou expirado.") from error
 
 def save_task(task_id, data):
     """Salva o estado da tarefa em um arquivo JSON."""
@@ -232,10 +259,29 @@ def processar_revamais_background(task_id: str, opcoes: dict):
                 task_state["result"] = resultado
                 save_task(task_id, task_state)
             else:
+                log_callback("🔎 Conferindo o conteúdo do Reva+ contra as fontes selecionadas...")
+                from revamais_service import client as revamais_client
+                editorial_draft = revamais_editorial.create_draft(
+                    BASE_DATA_DIR,
+                    resultado,
+                    source_task_id=task_id,
+                )
+                editorial_draft = revamais_editorial.audit_draft(
+                    BASE_DATA_DIR,
+                    editorial_draft["id"],
+                    revamais_client,
+                )
+                resultado["editorial"] = revamais_editorial.review_payload(editorial_draft)
+                resultado["draft_id"] = editorial_draft["id"]
+                resultado["html_content"] = editorial_draft["content"]["html_content"]
+                resultado["html_full"] = editorial_draft["content"]["html_full"]
                 task_state = load_task(task_id) or {"logs": []}
                 task_state["status"] = "completed"
                 task_state["result"] = resultado
-                task_state["logs"].append("✅ Processo Reva+ finalizado.")
+                if editorial_draft["status"] == "blocked":
+                    task_state["logs"].append("⚠️ Rascunho salvo com pendências científicas para revisão.")
+                else:
+                    task_state["logs"].append("📄 Rascunho pronto para revisão e aprovação.")
                 save_task(task_id, task_state)
         else:
             task_state = load_task(task_id) or {"logs": []}
@@ -587,6 +633,30 @@ class RevaMaisConsensusPdfInput(BaseModel):
     pdf_base64: str
     quantidade_referencias: int | None = None
 
+
+class RevaMaisDraftEditInput(BaseModel):
+    sha256: str
+    titulo: str
+    html_content: str
+    instagram_assets: list[dict] = Field(default_factory=list)
+
+
+class RevaMaisDraftVersionInput(BaseModel):
+    sha256: str
+
+
+class RevaMaisRegenerateAssetInput(BaseModel):
+    sha256: str
+    instruction: str = ""
+
+
+class RevaMaisFinalizeInput(BaseModel):
+    sha256: str
+    publicar_email: bool = False
+    criar_whatsapp: bool = True
+    schedule_time: str | None = None
+    site_url: str | None = None
+
 @app.post("/iniciar-revamais")
 def iniciar_revamais(
     background_tasks: BackgroundTasks,
@@ -632,6 +702,137 @@ def iniciar_revamais(
 @app.post("/cancelar-tarefa/{task_id}")
 def cancelar_tarefa_generica(task_id: str):
     return cancelar_boletim(task_id) # Reutiliza a mesma lógica
+
+
+@app.get("/revamais-rascunho/{draft_id}")
+def get_revamais_draft(draft_id: str, request: Request):
+    require_revamais_admin(request)
+    try:
+        return revamais_editorial.review_payload(
+            revamais_editorial.load_draft(BASE_DATA_DIR, draft_id)
+        )
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/editar")
+def edit_revamais_draft(
+    draft_id: str,
+    payload: RevaMaisDraftEditInput,
+    background_tasks: BackgroundTasks,
+    request: Request,
+):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.save_edited_draft(
+            BASE_DATA_DIR,
+            draft_id,
+            payload.sha256,
+            payload.titulo,
+            payload.html_content,
+            payload.instagram_assets,
+        )
+        from revamais_service import client as revamais_client
+        background_tasks.add_task(
+            revamais_editorial.audit_draft,
+            BASE_DATA_DIR,
+            draft["id"],
+            revamais_client,
+        )
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/aprovar")
+def approve_revamais_draft(draft_id: str, payload: RevaMaisDraftVersionInput, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.approve_draft(BASE_DATA_DIR, draft_id, payload.sha256)
+        return revamais_editorial.review_payload(draft)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+
+
+@app.post("/revamais-rascunho/{draft_id}/imagens/{asset_id}/regenerar")
+def regenerate_revamais_asset(
+    draft_id: str,
+    asset_id: str,
+    payload: RevaMaisRegenerateAssetInput,
+    request: Request,
+):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.load_draft(BASE_DATA_DIR, draft_id)
+        if draft.get("sha256") != payload.sha256:
+            raise revamais_editorial.RevaMaisEditorialError(
+                "A versão mudou. Recarregue o rascunho antes de refazer a imagem."
+            )
+        asset = next((item for item in draft.get("visual_assets", []) if item.get("id") == asset_id), None)
+        if not asset:
+            return JSONResponse(status_code=404, content={"error": "Imagem não encontrada."})
+        from revamais_service import regenerar_asset_revamais
+        new_url, new_prompt = regenerar_asset_revamais(asset, payload.instruction)
+        updated = revamais_editorial.save_regenerated_asset(
+            BASE_DATA_DIR,
+            draft_id,
+            payload.sha256,
+            asset_id,
+            new_url,
+            new_prompt,
+        )
+        return revamais_editorial.review_payload(updated)
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+    except Exception as error:
+        return JSONResponse(status_code=502, content={"error": f"Falha ao refazer a imagem: {error}"})
+
+
+@app.post("/revamais-rascunho/{draft_id}/finalizar")
+def finalize_revamais_draft(draft_id: str, payload: RevaMaisFinalizeInput, request: Request):
+    require_revamais_admin(request)
+    try:
+        draft = revamais_editorial.approved_draft(BASE_DATA_DIR, draft_id, payload.sha256)
+        from revamais_service import finalizar_publicacao_revamais
+        publication = finalizar_publicacao_revamais(
+            draft,
+            publicar_email=payload.publicar_email,
+            criar_whatsapp=payload.criar_whatsapp,
+            schedule_time=payload.schedule_time,
+            site_url=payload.site_url,
+            previous_publication=draft.get("publication_progress"),
+        )
+        progress_draft = revamais_editorial.save_publication_progress(
+            BASE_DATA_DIR,
+            draft_id,
+            payload.sha256,
+            publication,
+        )
+        if publication.get("status") != "success":
+            return JSONResponse(
+                status_code=502,
+                content={
+                    "error": "A publicação ficou parcial e pode ser retomada sem repetir as etapas concluídas.",
+                    "publication": publication,
+                    "editorial": revamais_editorial.review_payload(progress_draft),
+                },
+            )
+        published = revamais_editorial.mark_published(BASE_DATA_DIR, draft_id, publication)
+        return {"publication": publication, "editorial": revamais_editorial.review_payload(published)}
+    except FileNotFoundError:
+        return JSONResponse(status_code=404, content={"error": "Rascunho Reva+ não encontrado."})
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": str(error)})
+    except Exception as error:
+        return JSONResponse(status_code=502, content={"error": f"Falha ao finalizar publicação: {error}"})
 
 
 @app.get("/calendario-revamais")
@@ -948,26 +1149,49 @@ def criar_revamais_endpoint(input_data: RevaMaisInput):
 
 # --- Novo Endpoint para Publicar no Site ---
 @app.post("/publicar-noticia")
-async def publicar_noticia_website(payload: NewsPayload):
+async def publicar_noticia_website(payload: NewsPayload, request: Request):
     """
     Recebe o conteúdo aprovado pelo usuário e salva na coleção 'news' do Firestore.
     Isso permitirá que o site exiba a notícia automaticamente.
     """
+    require_revamais_admin(request)
     try:
         from firebase_service import save_firestore_document
+        approved = revamais_editorial.approved_draft(
+            BASE_DATA_DIR,
+            payload.draft_id,
+            payload.sha256,
+        )
+        safe_content = revamais_editorial.sanitize_html(approved["content"]["html_content"])
+        if len(revamais_editorial.html_to_text(safe_content)) < 80:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Conteúdo HTML vazio ou inválido."},
+            )
         
         # Gera ID amigável (Slug)
-        slug = simple_slugify(payload.titulo)
+        approved_title = approved["content"]["title"]
+        opening_asset = next(
+            (item for item in approved.get("visual_assets", []) if item.get("kind") == "newsletter_opening"),
+            None,
+        )
+        approved_image = (opening_asset or {}).get("url") or payload.imagem_capa
+        approved_text = revamais_editorial.html_to_text(safe_content)
+        summary_slice = approved_text[:220]
+        if len(approved_text) > 220 and " " in summary_slice:
+            summary_slice = summary_slice.rsplit(" ", 1)[0].rstrip() + "…"
+        approved_summary = summary_slice
+        slug = simple_slugify(approved_title)
         # Adiciona timestamp curto para garantir unicidade
         doc_id = f"{slug}-{datetime.now().strftime('%Y%m%d')}"
         
         doc_data = {
-            "title": payload.titulo,
-            "content": payload.html_content, # HTML interno
+            "title": approved_title,
+            "content": safe_content,
             "publishedAt": payload.data_publicacao, # String DD/MM/YYYY
             "createdAt": datetime.now().isoformat(),
-            "coverImage": payload.imagem_capa,
-            "summary": payload.resumo or "",
+            "coverImage": approved_image,
+            "summary": approved_summary,
             "author": payload.autor,
             "status": "published",
             "slug": doc_id
@@ -977,10 +1201,23 @@ async def publicar_noticia_website(payload: NewsPayload):
         success = save_firestore_document("news", doc_id, doc_data)
         
         if success:
-            return {"status": "success", "message": "Notícia publicada com sucesso!", "id": doc_id, "slug": doc_id}
+            return {
+                "status": "success",
+                "message": "Notícia publicada com sucesso!",
+                "id": doc_id,
+                "slug": doc_id,
+                "published": {
+                    "title": approved_title,
+                    "html_content": safe_content,
+                    "imagem_capa": approved_image,
+                    "resumo": approved_summary,
+                },
+            }
         else:
             return JSONResponse(status_code=500, content={"status": "error", "message": "Falha ao salvar no Firestore."})
             
+    except ValueError as e:
+        return JSONResponse(status_code=409, content={"status": "error", "message": str(e)})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
