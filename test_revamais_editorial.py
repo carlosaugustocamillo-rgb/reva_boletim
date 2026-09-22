@@ -1,6 +1,7 @@
 import tempfile
 import unittest
 import os
+import re
 
 import revamais_editorial as editorial
 
@@ -230,6 +231,33 @@ class RevaMaisEditorialTest(unittest.TestCase):
         untouched = editorial.load_draft(self.base_dir, previous["id"])
         self.assertNotIn("Nova versão segura", untouched["content"]["html_content"])
 
+    def test_email_preview_constrains_every_article_image(self):
+        draft = editorial.create_draft(self.base_dir, sample_result(), source_task_id="task-1")
+        email_content = draft["content"]["html_full"].split(editorial.CONTENT_START, 1)[1].split(
+            editorial.CONTENT_END, 1
+        )[0]
+        images = re.findall(r"<img\b[^>]*>", email_content, flags=re.I)
+        self.assertEqual(len(images), 2)
+        for image in images:
+            self.assertIn('class="body-img"', image)
+            self.assertIn('width="520"', image)
+            self.assertIn("width:100%", image)
+            self.assertIn("max-width:520px", image)
+            self.assertIn("height:auto", image)
+
+    def test_mailchimp_normalization_repairs_legacy_content_without_touching_header(self):
+        legacy = (
+            '<html><body><img class="header-img" src="https://example.com/header.png">'
+            f'{editorial.CONTENT_START}<p><img src="https://example.com/legacy.png"></p>'
+            f'{editorial.CONTENT_END}</body></html>'
+        )
+        normalized = editorial.email_safe_document(legacy)
+        header = re.search(r'<img[^>]+header\.png[^>]*>', normalized).group(0)
+        article = re.search(r'<img[^>]+legacy\.png[^>]*>', normalized).group(0)
+        self.assertNotIn('width="520"', header)
+        self.assertIn('width="520"', article)
+        self.assertIn("max-width:520px", article)
+
     def test_single_asset_regeneration_preserves_other_assets_and_updates_html(self):
         previous = self.create_audited()
         updated = editorial.save_regenerated_asset(
@@ -246,6 +274,13 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertEqual(len(science["versions"]), 2)
         self.assertEqual(opening["url"], "https://example.com/opening.png")
         self.assertIn("science-v2.png", updated["content"]["html_content"])
+        self.assertIn("science-v2.png", updated["content"]["html_full"])
+        science_email_image = re.search(
+            r'<img[^>]+src="https://example.com/science-v2\.png"[^>]*>',
+            updated["content"]["html_full"],
+        ).group(0)
+        self.assertIn('width="520"', science_email_image)
+        self.assertIn("max-width:520px", science_email_image)
 
     def test_schedule_edit_creates_approved_child_and_updates_visible_date(self):
         source = sample_result()

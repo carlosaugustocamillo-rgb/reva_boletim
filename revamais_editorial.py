@@ -186,6 +186,65 @@ def rebuild_full_html(previous, new_content):
     return previous
 
 
+def _email_safe_images(content):
+    """Constrain article images using attributes understood by email clients."""
+    image_style = {
+        "width": "100%",
+        "max-width": "520px",
+        "height": "auto",
+        "display": "block",
+    }
+
+    def normalize(match):
+        tag = match.group(0)
+        class_match = re.search(r'\sclass="([^"]*)"', tag, flags=re.I)
+        classes = (class_match.group(1).split() if class_match else [])
+        if "body-img" not in classes:
+            classes.append("body-img")
+        class_attr = f' class="{html.escape(" ".join(classes), quote=True)}"'
+        if class_match:
+            tag = tag[:class_match.start()] + class_attr + tag[class_match.end():]
+        else:
+            tag = tag[:-1] + class_attr + ">"
+
+        style_match = re.search(r'\sstyle="([^"]*)"', tag, flags=re.I)
+        declarations = {}
+        if style_match:
+            for item in style_match.group(1).split(";"):
+                name, separator, value = item.partition(":")
+                if separator and name.strip() and value.strip():
+                    declarations[name.strip().lower()] = value.strip()
+        declarations.update(image_style)
+        style_attr = ' style="' + html.escape(
+            ";".join(f"{name}:{value}" for name, value in declarations.items()) + ";",
+            quote=True,
+        ) + '"'
+        if style_match:
+            tag = tag[:style_match.start()] + style_attr + tag[style_match.end():]
+        else:
+            tag = tag[:-1] + style_attr + ">"
+
+        width_match = re.search(r'\swidth="[^"]*"', tag, flags=re.I)
+        if width_match:
+            tag = tag[:width_match.start()] + ' width="520"' + tag[width_match.end():]
+        else:
+            tag = tag[:-1] + ' width="520">'
+        tag = re.sub(r'\sheight="[^"]*"', "", tag, flags=re.I)
+        return tag
+
+    return re.sub(r"<img\b[^>]*>", normalize, str(content or ""), flags=re.I)
+
+
+def email_safe_document(document):
+    """Normalize article images in a complete Mailchimp document, including legacy drafts."""
+    document = str(document or "")
+    if CONTENT_START in document and CONTENT_END in document:
+        prefix, remainder = document.split(CONTENT_START, 1)
+        content, suffix = remainder.split(CONTENT_END, 1)
+        return f"{prefix}{CONTENT_START}{_email_safe_images(content)}{CONTENT_END}{suffix}"
+    return _email_safe_images(document)
+
+
 def _email_content_from_site(content_html, visual_assets):
     content = re.sub(
         r'<div[^>]*class=["\'][^"\']*references[^"\']*["\'][^>]*>.*?</div>',
@@ -198,18 +257,19 @@ def _email_content_from_site(content_html, visual_assets):
         None,
     )
     opening_url = _safe_url((opening or {}).get("url"), image=True)
-    if not opening_url or opening_url in content:
-        return content
-    block = (
-        '<div class="image-block" style="margin:20px 0;">'
-        f'<img src="{html.escape(opening_url, quote=True)}" class="body-img" '
-        'alt="Cena de abertura relacionada ao tema do boletim" '
-        'style="width:100%;margin:0;border-radius:8px;display:block;"></div>'
-    )
-    match = re.search(r"<h1[^>]*>.*?</h1>", content, flags=re.I | re.S)
-    if match:
-        return content[:match.end()] + block + content[match.end():]
-    return block + content
+    if opening_url and opening_url not in content:
+        block = (
+            '<div class="image-block" style="margin:20px 0;">'
+            f'<img src="{html.escape(opening_url, quote=True)}" class="body-img" '
+            'alt="Cena de abertura relacionada ao tema do boletim" '
+            'style="width:100%;margin:0;border-radius:8px;display:block;"></div>'
+        )
+        match = re.search(r"<h1[^>]*>.*?</h1>", content, flags=re.I | re.S)
+        if match:
+            content = content[:match.end()] + block + content[match.end():]
+        else:
+            content = block + content
+    return _email_safe_images(content)
 
 
 def _source_id(reference, index):
@@ -1105,7 +1165,10 @@ def save_regenerated_asset(base_dir, draft_id, sha256, asset_id, new_url, new_pr
     content = copy.deepcopy(previous["content"])
     if old_url:
         content["html_content"] = content.get("html_content", "").replace(old_url, new_url)
-        content["html_full"] = content.get("html_full", "").replace(old_url, new_url)
+        content["html_full"] = rebuild_full_html(
+            content.get("html_full"),
+            _email_content_from_site(content["html_content"], assets),
+        )
     for item in content.get("instagram_assets", []):
         if item.get("asset_id") == asset_id or (old_url and item.get("url") == old_url):
             item["url"] = new_url

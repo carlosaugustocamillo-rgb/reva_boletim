@@ -2606,7 +2606,7 @@ def criar_campanha_revamais(
         return (
             '\n<div class="image-block" style="margin:20px 0;">'
             f'\n<img src="{html.escape(str(img_url or ""), quote=True)}" class="body-img" alt="{html.escape(str(alt or ""), quote=True)}" '
-            'style="width:100%;margin:0;border-radius:8px;display:block;">'
+            'width="520" style="width:100%;max-width:520px;height:auto;margin:0;border-radius:8px;display:block;">'
             f"{caption_html}</div>\n"
         )
 
@@ -2723,7 +2723,7 @@ def criar_campanha_revamais(
             body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; background-color: #f9f9f9; }}
             .container {{ background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px; }}
             .header-img {{ width: 100%; border-radius: 8px 8px 0 0; display: block; }}
-            .body-img {{ width: 100%; margin: 20px 0; border-radius: 8px; }}
+            .body-img {{ width: 100%; max-width: 520px; height: auto; margin: 20px auto; border-radius: 8px; display: block; }}
             h1 {{ color: #205776; }}
             h2 {{ color: #407ca6; }}
             a {{ color: #205776; text-decoration: none; font-weight: bold; }}
@@ -2937,7 +2937,8 @@ def finalizar_publicacao_revamais(
     content = draft.get("content") or {}
     metadata = draft.get("metadata") or {}
     tema = str(content.get("title") or metadata.get("tema") or "Reva+").strip()
-    html_email = str(content.get("html_full") or "").strip()
+    from revamais_editorial import email_safe_document
+    html_email = email_safe_document(content.get("html_full")).strip()
     result = dict(previous_publication or {})
     result.setdefault("campaign_id", None)
     result.setdefault("email_content_set", False)
