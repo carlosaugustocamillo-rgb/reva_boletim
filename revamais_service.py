@@ -2947,7 +2947,14 @@ def finalizar_publicacao_revamais(
     result.setdefault("calendar_completed", False)
     errors = []
 
-    if force_new_email_campaign and publicar_email:
+    resuming_partial_resubmission = bool(
+        force_new_email_campaign
+        and publicar_email
+        and result.get("status") == "partial"
+        and result.get("campaign_id")
+        and result.get("mailchimp_submissions")
+    )
+    if force_new_email_campaign and publicar_email and not resuming_partial_resubmission:
         previous_campaign = result.get("campaign_id")
         if previous_campaign:
             history = list(result.get("mailchimp_submissions") or [])
@@ -2957,9 +2964,10 @@ def finalizar_publicacao_revamais(
                 "replaced_at": datetime.now().isoformat(),
             })
             result["mailchimp_submissions"] = history
-        result["campaign_id"] = None
-        result["email_content_set"] = False
-        result["email_scheduled"] = False
+            result["campaign_id"] = None
+            result["email_content_set"] = False
+            result["email_scheduled"] = False
+        result["resubmission_started_at"] = datetime.now().isoformat()
 
     if publicar_email:
         if not html_email:
@@ -2984,7 +2992,24 @@ def finalizar_publicacao_revamais(
                 mc.campaigns.schedule(result["campaign_id"], {"schedule_time": schedule_time})
                 result["email_scheduled"] = True
         except Exception as error:
-            errors.append(f"Mailchimp: {error}")
+            # A API pode concluir o agendamento e a resposta se perder no caminho.
+            # Confirme o estado remoto antes de declarar falha e induzir outra campanha.
+            remote_status = ""
+            if result.get("campaign_id") and schedule_time:
+                try:
+                    campaign_info = mc.campaigns.get(
+                        result["campaign_id"],
+                        fields=["id", "status", "send_time"],
+                    )
+                    remote_status = str((campaign_info or {}).get("status") or "").lower()
+                    result["mailchimp_status"] = remote_status
+                except Exception as confirmation_error:
+                    result["mailchimp_confirmation_error"] = str(confirmation_error)
+            if remote_status in {"schedule", "sending", "sent"}:
+                result["email_content_set"] = True
+                result["email_scheduled"] = True
+            else:
+                errors.append(f"Mailchimp: {error}")
 
     if criar_whatsapp and not result["whatsapp_created"]:
         try:
@@ -3007,7 +3032,12 @@ def finalizar_publicacao_revamais(
             errors.append(f"WhatsApp: {error}")
 
     calendar_index = metadata.get("calendar_index")
-    if not errors and calendar_index is not None and not result["calendar_completed"]:
+    if (
+        not force_new_email_campaign
+        and not errors
+        and calendar_index is not None
+        and not result["calendar_completed"]
+    ):
         try:
             marcar_tema_revamais_concluido(
                 calendar_index,
@@ -3018,6 +3048,8 @@ def finalizar_publicacao_revamais(
             errors.append(f"Calendário: {error}")
     result["status"] = "partial" if errors else "success"
     result["errors"] = errors
+    if force_new_email_campaign and not errors:
+        result["resubmission_completed_at"] = datetime.now().isoformat()
     return result
 
 

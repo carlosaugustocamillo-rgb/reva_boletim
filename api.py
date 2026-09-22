@@ -901,7 +901,14 @@ def regenerate_revamais_asset(
 def finalize_revamais_draft(draft_id: str, payload: RevaMaisFinalizeInput, request: Request):
     require_revamais_admin(request)
     try:
-        draft = revamais_editorial.approved_draft(BASE_DATA_DIR, draft_id, payload.sha256)
+        if payload.force_new_email_campaign:
+            draft = revamais_editorial.load_draft(BASE_DATA_DIR, draft_id)
+            if draft.get("status") not in {"approved", "published"} or draft.get("sha256") != payload.sha256:
+                raise revamais_editorial.RevaMaisEditorialError(
+                    "Aprove exatamente esta versão antes de reenviar ao Mailchimp."
+                )
+        else:
+            draft = revamais_editorial.approved_draft(BASE_DATA_DIR, draft_id, payload.sha256)
         from revamais_service import finalizar_publicacao_revamais
         publication = finalizar_publicacao_revamais(
             draft,
@@ -917,6 +924,7 @@ def finalize_revamais_draft(draft_id: str, payload: RevaMaisFinalizeInput, reque
             draft_id,
             payload.sha256,
             publication,
+            allow_published=payload.force_new_email_campaign,
         )
         if publication.get("status") != "success":
             return JSONResponse(

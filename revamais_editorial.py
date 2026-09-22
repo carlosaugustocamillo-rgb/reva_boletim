@@ -1275,8 +1275,13 @@ def approved_draft(base_dir, draft_id, sha256):
     return draft
 
 
-def save_publication_progress(base_dir, draft_id, sha256, publication):
-    draft = approved_draft(base_dir, draft_id, sha256)
+def save_publication_progress(base_dir, draft_id, sha256, publication, allow_published=False):
+    if allow_published:
+        draft = load_draft(base_dir, draft_id)
+        if draft.get("status") not in {"approved", "published"} or draft.get("sha256") != sha256:
+            raise RevaMaisEditorialError("Aprove exatamente esta versão antes de publicar.")
+    else:
+        draft = approved_draft(base_dir, draft_id, sha256)
     draft["publication_progress"] = copy.deepcopy(publication)
     save_draft(base_dir, draft)
     return draft

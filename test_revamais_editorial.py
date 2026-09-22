@@ -359,6 +359,22 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertEqual(progress["sha256"], approved["sha256"])
         self.assertEqual(progress["publication_progress"]["campaign_id"], "campaign-1")
 
+    def test_published_draft_can_store_mailchimp_resubmission_progress(self):
+        audited = self.create_audited()
+        approved = editorial.approve_draft(self.base_dir, audited["id"], audited["sha256"])
+        published = editorial.mark_published(
+            self.base_dir, approved["id"], {"status": "success", "campaign_id": "campaign-1"}
+        )
+        progress = editorial.save_publication_progress(
+            self.base_dir,
+            published["id"],
+            published["sha256"],
+            {"status": "partial", "campaign_id": "campaign-2"},
+            allow_published=True,
+        )
+        self.assertEqual(progress["status"], "published")
+        self.assertEqual(progress["publication_progress"]["campaign_id"], "campaign-2")
+
 
 if __name__ == "__main__":
     unittest.main()
