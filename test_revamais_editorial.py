@@ -258,6 +258,11 @@ class RevaMaisEditorialTest(unittest.TestCase):
         self.assertIn('width="520"', article)
         self.assertIn("max-width:520px", article)
 
+        draft = editorial.create_draft(self.base_dir, sample_result())
+        draft["content"]["html_full"] = legacy
+        preview = editorial.review_payload(draft)["content"]["html_full"]
+        self.assertIn("max-width:520px", preview)
+
     def test_single_asset_regeneration_preserves_other_assets_and_updates_html(self):
         previous = self.create_audited()
         updated = editorial.save_regenerated_asset(

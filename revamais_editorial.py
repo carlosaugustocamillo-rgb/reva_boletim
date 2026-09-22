@@ -1297,12 +1297,14 @@ def review_payload(draft):
         item = copy.deepcopy(source)
         item["content"] = item.get("content", "")[:12000]
         evidence.append(item)
+    content = copy.deepcopy(draft["content"])
+    content["html_full"] = email_safe_document(content.get("html_full"))
     return {
         "id": draft["id"],
         "sha256": draft["sha256"],
         "status": draft["status"],
         "title": draft["content"]["title"],
-        "content": copy.deepcopy(draft["content"]),
+        "content": content,
         "metadata": copy.deepcopy(draft["metadata"]),
         "visual_assets": copy.deepcopy(draft.get("visual_assets", [])),
         "evidence": evidence,
