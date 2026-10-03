@@ -79,6 +79,7 @@ INTRO_PATH = os.path.join(BASE_DIR, INTRO_FILENAME)
 # --- OpenAI ---
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 client = OpenAI(api_key=OPENAI_API_KEY)
+OPENAI_TRANSLATION_MODEL = os.environ.get("OPENAI_TRANSLATION_MODEL", "gpt-5.5")
 
 # --- PubMed / Entrez ---
 Entrez.email = os.environ["ENTREZ_EMAIL"]
@@ -377,24 +378,20 @@ def traduzir_resumo(texto):
     Tradução literal para português do Brasil:
     """
 
-    try:
-        model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-        resposta = model.generate_content(prompt)
-        return resposta.text.strip()
-    except Exception as e:
-        print(f"⚠️ Erro Gemini na tradução: {e}. Tentando fallback OpenAI...")
-        resposta = client.chat.completions.create(
-            model="gpt-4o", # Ajustado para modelo válido
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Você é um tradutor científico que faz traduções literais, sem resumir ou interpretar."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.0,
-        )
-        return resposta.choices[0].message.content.strip()
+    resposta = client.chat.completions.create(
+        model=OPENAI_TRANSLATION_MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": "Você é um tradutor científico que faz traduções literais, sem resumir ou interpretar."
+            },
+            {"role": "user", "content": prompt}
+        ],
+    )
+    conteudo = (resposta.choices[0].message.content or "").strip()
+    if not conteudo:
+        raise RuntimeError("O modelo de tradução retornou conteúdo vazio.")
+    return conteudo
 
 
 def resumo_para_podcast(titulo, resumo_pt, primeiro_autor, idx=0, is_last=False, contexto_pubmed=None, data_estudo=""):
