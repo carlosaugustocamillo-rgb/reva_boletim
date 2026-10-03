@@ -3,16 +3,15 @@ import json
 import requests
 import uuid
 from datetime import datetime
-import google.generativeai as genai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Configure Gemini
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+OPENAI_REVACAST_MODEL = os.environ.get("OPENAI_REVACAST_MODEL", "gpt-5.5")
+openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 # WhatsApp API Configuration (User will provide these later)
 WA_PHONE_ID = os.environ.get("WA_PHONE_NUMBER_ID")
@@ -25,7 +24,7 @@ def get_whatsapp_api_url():
 
 def generate_draft_text(source_type, content_data):
     """
-    Uses Gemini to generate a short, engaging WhatsApp message based on the content.
+    Uses OpenAI to generate a short, engaging WhatsApp message based on the content.
     
     Args:
         source_type (str): 'revacast_weekly' or 'revamais'
@@ -34,8 +33,6 @@ def generate_draft_text(source_type, content_data):
     Returns:
         str: The generated text for the WhatsApp message.
     """
-    model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-    
     if source_type == 'revacast_weekly':
         prompt = f"""
         You are the social media manager for 'RevaCast', a scientific podcast for physiotherapists.
@@ -76,8 +73,16 @@ def generate_draft_text(source_type, content_data):
         return "New content available!"
 
     try:
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        if not openai_client:
+            raise ValueError("OPENAI_API_KEY não configurada.")
+        response = openai_client.chat.completions.create(
+            model=OPENAI_REVACAST_MODEL,
+            messages=[
+                {"role": "system", "content": "Você escreve mensagens curtas para WhatsApp sem inventar informações."},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        return (response.choices[0].message.content or "").strip()
     except Exception as e:
         print(f"⚠️ Error generating WhatsApp draft: {e}")
         return f"🔔 New {source_type} content available: {content_data.get('title')} - {content_data.get('link')}"
@@ -209,4 +214,3 @@ def update_draft_status(draft_id, status, scheduled_date=None):
         update_data["scheduled_for"] = scheduled_date
         
     return update_firestore_document("whatsapp_drafts", draft_id, update_data)
-

@@ -1044,8 +1044,15 @@
                         btnCancel.innerHTML = "🛑 Cancelar Processo";
 
                         if (data.status === 'completed') {
-                            statusDiv.className = 'success';
-                            statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado!';
+                            const hasOutcomeProblem = data.outcome && data.outcome !== 'success';
+                            const outcomeMessage = data.message || 'A execução terminou com pendências.';
+                            if (hasOutcomeProblem) {
+                                statusDiv.className = 'error';
+                                statusDiv.innerHTML = escapeHtml(outcomeMessage);
+                            } else {
+                                statusDiv.className = 'success';
+                                statusDiv.innerHTML = '✅ <strong>Sucesso!</strong><br>Processo finalizado!';
+                            }
 
                             if (data.result && data.result.audio_url) {
                                 const downloadUrl = data.result.audio_url;

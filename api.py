@@ -176,7 +176,10 @@ def processar_boletim_background(task_id: str, opcoes: dict):
         
         task_state["status"] = "completed"
         result = task_state.get('result') or {}
-        if result.get('roteiro_erro') or result.get('audio_erro'):
+        if (result.get('mailchimp') or {}).get('status') == 'blocked_empty':
+            task_state['outcome'] = 'error'
+            task_state['message'] = '❌ Campanha não agendada: o boletim não contém resumos traduzidos.'
+        elif result.get('roteiro_erro') or result.get('audio_erro'):
             task_state['outcome'] = 'partial'
             task_state['message'] = '⚠️ Execução encerrada com pendências no podcast; confira o roteiro e os logs.'
         elif (result.get('roteiro_editorial') or {}).get('status') == 'pending_review':

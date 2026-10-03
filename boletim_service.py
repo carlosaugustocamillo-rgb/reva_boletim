@@ -49,14 +49,6 @@ from pubmed_related import (
 # Carrega variáveis de ambiente do arquivo .env
 load_dotenv()
 
-import google.generativeai as genai
-
-# Configuração Gemini
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
-
-
 # ======================================================================
 # CONFIGURAÇÕES GERAIS
 # ======================================================================
@@ -79,7 +71,8 @@ INTRO_PATH = os.path.join(BASE_DIR, INTRO_FILENAME)
 # --- OpenAI ---
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 client = OpenAI(api_key=OPENAI_API_KEY)
-OPENAI_TRANSLATION_MODEL = os.environ.get("OPENAI_TRANSLATION_MODEL", "gpt-5.5")
+OPENAI_REVACAST_MODEL = os.environ.get("OPENAI_REVACAST_MODEL", "gpt-5.5")
+OPENAI_TRANSLATION_MODEL = OPENAI_REVACAST_MODEL
 
 # --- PubMed / Entrez ---
 Entrez.email = os.environ["ENTREZ_EMAIL"]
@@ -475,7 +468,7 @@ Retorne APENAS um array JSON válido.
 """
 
     resposta = client.chat.completions.create(
-        model="gpt-4o", # ou gpt-5.1
+        model=OPENAI_REVACAST_MODEL,
         messages=[
             {
                 "role": "system",
@@ -483,7 +476,6 @@ Retorne APENAS um array JSON válido.
             },
             {"role": "user", "content": prompt}
         ],
-        temperature=0.7,
     )
     
     import json
@@ -691,22 +683,9 @@ Roteiro ETAPA 8 para revisar:
 {json.dumps(payload, ensure_ascii=False, indent=2)}
 """
 
-    # 1) Tenta Gemini
-    if GEMINI_API_KEY:
-        try:
-            model = genai.GenerativeModel('gemini-2.5-flash-preview-09-2025')
-            resposta = model.generate_content(prompt)
-            revisado = parse_roteiro_completo_json(getattr(resposta, "text", ""))
-            if len(revisado) == len(roteiro_base):
-                return revisado
-            print("⚠️ Revisão completa Gemini inválida/incompleta. Tentando OpenAI...")
-        except Exception as e:
-            print(f"⚠️ Erro Gemini na revisão completa: {e}. Tentando fallback OpenAI...")
-
-    # 2) Fallback OpenAI
     try:
         resposta = client.chat.completions.create(
-            model="gpt-4o",
+            model=OPENAI_REVACAST_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -717,7 +696,6 @@ Roteiro ETAPA 8 para revisar:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.3,
         )
         conteudo = resposta.choices[0].message.content.strip()
         revisado = parse_roteiro_completo_json(conteudo)
@@ -774,7 +752,7 @@ def _brief_spotify_fallback(titulos_estudos, data_ref):
 def gerar_brief_spotify(roteiros_audio, titulos_estudos, data_ref):
     """
     Gera um brief/resumo do episódio para descrição no Spotify.
-    Usa Gemini primeiro e OpenAI como fallback.
+    Usa exclusivamente o modelo OpenAI configurado para o RevaCast.
     """
     roteiro_texto = _roteiro_para_texto_continuo(roteiros_audio)
     if not roteiro_texto.strip():
@@ -806,22 +784,9 @@ Roteiro do episódio:
 {roteiro_texto}
 """
 
-    # 1) Gemini
-    if GEMINI_API_KEY:
-        try:
-            model = genai.GenerativeModel("gemini-2.5-flash-preview-09-2025")
-            resposta = model.generate_content(prompt)
-            texto = _strip_code_fence(getattr(resposta, "text", ""))
-            if len(texto) >= 180:
-                return texto
-            print("⚠️ Brief Spotify Gemini curto/inválido. Tentando OpenAI...")
-        except Exception as e:
-            print(f"⚠️ Erro Gemini ao gerar brief Spotify: {e}. Tentando OpenAI...")
-
-    # 2) OpenAI
     try:
         resposta = client.chat.completions.create(
-            model="gpt-4o",
+            model=OPENAI_REVACAST_MODEL,
             messages=[
                 {
                     "role": "system",
@@ -829,7 +794,6 @@ Roteiro do episódio:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.35,
         )
         texto = _strip_code_fence(resposta.choices[0].message.content.strip())
         if len(texto) >= 180:
@@ -1500,12 +1464,14 @@ def rodar_boletim(opcoes=None):
     editorial_error = None
     audio_error = None
     audio_canonico = False
+    resumos_publicados = 0
+    falhas_traducao = []
     
     # ------------------------------------------------------------------
     # 1) BOLETIM PRINCIPAL & DETALHADO (RESUMOS)
     # ------------------------------------------------------------------
     if opcoes.get('resumos'):
-        yield "🔎 1/5: Buscando artigos no PubMed e gerando Resumos..."
+        yield f"🔎 1/5: Buscando artigos no PubMed e gerando Resumos (modelo: {OPENAI_TRANSLATION_MODEL})..."
         
         # --- BOLETIM PRINCIPAL ---
         boletim_final = (
@@ -1573,12 +1539,22 @@ def rodar_boletim(opcoes=None):
                     resumo_traduzido = traduzir_resumo(resumo_original)
                     html_formatado = formatar_artigo_para_html(art, resumo_traduzido)
                     boletim_final += html_formatado
+                    resumos_publicados += 1
                 except Exception as e:
-                    print(f"❌ Erro na tradução para o PMID {art['pmid']}: {e}")
+                    erro_traducao = f"{type(e).__name__}: {e}"
+                    falhas_traducao.append({"pmid": str(art['pmid']), "erro": erro_traducao})
+                    print(f"❌ Erro na tradução para o PMID {art['pmid']}: {erro_traducao}")
                     boletim_revisao += (
                         info_basica_artigo
-                        + f"\nMotivo da falha: Erro na chamada da API de tradução - {e}\n\n---\n\n"
+                        + f"\nMotivo da falha: Erro na chamada da API de tradução - {erro_traducao}\n\n---\n\n"
                     )
+
+        if falhas_traducao:
+            yield f"⚠️ Falha na tradução de {len(falhas_traducao)} artigo(s); {resumos_publicados} resumo(s) entraram no boletim."
+            for falha in falhas_traducao[:3]:
+                yield f"   ❌ PMID {falha['pmid']}: {falha['erro']}"
+            if len(falhas_traducao) > 3:
+                yield f"   … e mais {len(falhas_traducao) - 3} falha(s)."
 
         boletim_final += (
             '<p style="font-family: Helvetica, Arial, sans-serif; color: #333; line-height: 1.5; margin-top: 30px;">'
@@ -2239,7 +2215,11 @@ def rodar_boletim(opcoes=None):
 
     if opcoes.get('mailchimp'):
         yield "📧 4/5: Mailchimp..."
-        if os.path.exists(boletim_path):
+        if opcoes.get('resumos') and resumos_publicados == 0:
+            mailchimp_status = "blocked_empty"
+            mailchimp_error = "Nenhum resumo foi gerado; campanha não agendada."
+            yield "❌ Mailchimp bloqueado: nenhum resumo foi gerado. Verifique as falhas de tradução acima."
+        elif os.path.exists(boletim_path):
             # ... (Lógica Mailchimp mantida) ...
             try:
                 assunto = "Boletim Científico Semanal | RevaCast"
@@ -2399,6 +2379,11 @@ def rodar_boletim(opcoes=None):
         "audio_url": audio_url,
         "rss_url": rss_url,
         "mailchimp": {"status": mailchimp_status, "error": mailchimp_error},
+        "traducao": {
+            "modelo": OPENAI_TRANSLATION_MODEL,
+            "resumos_publicados": resumos_publicados,
+            "falhas": falhas_traducao,
+        },
         "custos": {
             "elevenlabs_chars": total_chars_elevenlabs,
             "podcast_texto_tokens": tokens_editoriais,

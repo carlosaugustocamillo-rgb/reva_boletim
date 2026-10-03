@@ -93,7 +93,7 @@ editorial. Os dados se limitam aos abstracts; não pressupõem texto integral.
 - Até três tentativas por chamada HTTP, timeout de conexão/leitura e backoff.
   `Retry-After` longo encerra a tentativa de enriquecimento daquela âncora.
 - Cache por PMID por 24 horas (resposta vazia por uma hora), escrito atomicamente.
-- Triagem: `gpt-4o`, temperatura zero, timeout de 35 segundos, sem retentativas
+- Triagem: `gpt-5.5`, timeout de 35 segundos, sem retentativas
   automáticas; até duas chamadas adicionais por episódio na configuração padrão.
 - As consultas NCBI não exigem pagamento; a triagem usa a conta OpenAI já
   configurada. Tokens reais ficam em `tokens_triagem` no relatório. A estimativa
@@ -111,7 +111,7 @@ PODCAST_PUBMED_RELATED_MAX_ANCHORS=2
 PODCAST_PUBMED_RELATED_MAX_CANDIDATES=12
 PODCAST_PUBMED_RELATED_MAX_REFERENCES=2
 PODCAST_PUBMED_RELATED_CACHE_HOURS=24
-PODCAST_PUBMED_RELATED_MODEL=gpt-4o
+PODCAST_PUBMED_RELATED_MODEL=gpt-5.5
 ```
 
 `ENTREZ_EMAIL` já existente identifica a aplicação. `NCBI_API_KEY` é opcional.

@@ -204,7 +204,7 @@ class PubmedRelatedTest(unittest.TestCase):
         self.assertEqual(tokens["prompt_tokens"], 150)
         options = client.with_options.return_value.chat.completions.create.call_args.kwargs
         self.assertTrue(options["response_format"]["json_schema"]["strict"])
-        self.assertEqual(options["temperature"], 0)
+        self.assertNotIn("temperature", options)
 
     def test_screen_rejects_uncertain_pico_unknown_design_or_fabricated_quote(self):
         for changes in [dict(populacao="incerta"), dict(intervencao="incompativel"),

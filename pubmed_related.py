@@ -47,7 +47,7 @@ class RelatedConfig:
     max_candidates: int = 12
     max_references: int = 2
     cache_hours: int = 24
-    model: str = "gpt-4o"
+    model: str = "gpt-5.5"
 
     @classmethod
     def from_env(cls):
@@ -56,7 +56,7 @@ class RelatedConfig:
             max_candidates=_env_int("PODCAST_PUBMED_RELATED_MAX_CANDIDATES", 12, 1, 20),
             max_references=_env_int("PODCAST_PUBMED_RELATED_MAX_REFERENCES", 2, 1, 3),
             cache_hours=_env_int("PODCAST_PUBMED_RELATED_CACHE_HOURS", 24, 1, 168),
-            model=os.environ.get("PODCAST_PUBMED_RELATED_MODEL", "gpt-4o"),
+            model=os.environ.get("PODCAST_PUBMED_RELATED_MODEL", "gpt-5.5"),
         )
 
 
@@ -326,7 +326,7 @@ def screen_candidates(anchor, candidates, client, config):
         "type": "object", "properties": properties, "required": list(properties), "additionalProperties": False,
     }}}, "required": ["decisoes"], "additionalProperties": False}
     response = client.with_options(timeout=35.0, max_retries=0).chat.completions.create(
-        model=config.model, temperature=0, max_completion_tokens=3500,
+        model=config.model, max_completion_tokens=3500,
         response_format={"type": "json_schema", "json_schema": {"name": "triagem_pubmed", "strict": True, "schema": schema}},
         messages=[
             {"role": "system", "content": (
