@@ -1528,17 +1528,17 @@ def debug_import():
 @app.get("/teste-audio-curto")
 def teste_audio_curto():
     """
-    Testa o mesmo Text to Dialogue/Eleven v3 usado pelo RevaCast Weekly
+    Testa o mesmo Text to Dialogue/Eleven v4 usado pelo RevaCast Weekly
     e faz upload para o Firebase com baixo consumo de caracteres.
     """
     try:
         import os
-        from boletim_service import gerar_dialogo_com_eleven_v3
+        from boletim_service import gerar_dialogo_com_eleven
         from firebase_service import upload_file
 
         api_key = os.environ.get("ELEVENLABS_API_KEY")
-        VOICE_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "p5oveq8dCbyBIAaD6gzR")
-        VOICE_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "tnSpp4vdxKPjI9w0GnoV")
+        VOICE_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST", "NFmEzNOony1UsEJGXLth")
+        VOICE_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST", "uYXf8XasLslADfZ2MB4u")
 
         if not api_key:
             return {"status": "error", "message": "Sem chave ElevenLabs configurada."}
@@ -1551,14 +1551,14 @@ def teste_audio_curto():
         base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
         os.makedirs(base_dir, exist_ok=True)
         final_path = os.path.join(base_dir, "teste_fluxo_completo.mp3")
-        gerar_dialogo_com_eleven_v3(roteiro, final_path)
+        gerar_dialogo_com_eleven(roteiro, final_path)
         url = upload_file(final_path, "testes/teste_fluxo_completo.mp3")
 
         return {
             "status": "success",
             "message": "Áudio gerado e enviado com sucesso!",
             "url": url,
-            "model": os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v3"),
+            "model": os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v4"),
             "host_voice": VOICE_HOST,
             "cohost_voice": VOICE_COHOST
         }

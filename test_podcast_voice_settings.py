@@ -12,12 +12,13 @@ from elevenlabs import VoiceSettings
 def load_voice_config():
     source = Path(__file__).with_name("boletim_service.py").read_text(encoding="utf-8")
     functions = {
-        "_bool_env", "_float_env", "usar_dialogo_eleven_v3",
+        "_bool_env", "_float_env", "usar_dialogo_eleven", "usar_dialogo_eleven_v3",
         "parametros_tts_podcast", "gerar_fala_com_elevenlabs",
     }
     constants = {
         "ELEVEN_VOICE_ID_HOST", "ELEVEN_VOICE_ID_COHOST", "ELEVEN_AUDIO_MODEL",
-        "ELEVEN_AUDIO_DIALOGUE_ENABLED", "ELEVEN_AUDIO_FALLBACK_MODEL",
+        "ELEVEN_AUDIO_DIALOGUE_ENABLED", "ELEVEN_AUDIO_DIALOGUE_MODEL",
+        "ELEVEN_AUDIO_FALLBACK_MODEL",
         "ELEVEN_AUDIO_LANGUAGE_CODE",
     }
     nodes = []
@@ -43,7 +44,7 @@ class PodcastVoiceSettingsTest(unittest.TestCase):
     def test_requested_voice_profiles_reach_sdk_payload(self):
         config = load_voice_config()
         for speaker, voice_id, speed in (
-            ("HOST", "L0Dsvb3SLTyegXwtm47J", 1.1),
+            ("HOST", "NFmEzNOony1UsEJGXLth", 1.1),
             ("COHOST", "uYXf8XasLslADfZ2MB4u", 1.1),
         ):
             with self.subTest(speaker=speaker):
@@ -70,17 +71,30 @@ class PodcastVoiceSettingsTest(unittest.TestCase):
             self.assertEqual(params[0], params[1])
             self.assertEqual(params[1], params[2])
 
-    def test_legacy_v3_flag_does_not_override_multilingual_v2(self):
-        os.environ.update({"ELEVEN_AUDIO_DIALOGUE_ENABLED": "true", "ELEVEN_AUDIO_DIALOGUE_MODEL": "eleven_v3"})
+    def test_default_uses_v4_dialogue(self):
         config = load_voice_config()
-        self.assertFalse(config["usar_dialogo_eleven_v3"]())
+        self.assertTrue(config["usar_dialogo_eleven"]())
+        self.assertTrue(config["usar_dialogo_eleven_v3"]())
         self.assertEqual(config["parametros_tts_podcast"]("HOST")["model_id"], "eleven_multilingual_v2")
 
-    def test_v3_requires_explicit_model_and_flag(self):
-        os.environ["ELEVEN_AUDIO_MODEL"] = "eleven_v3"
-        self.assertFalse(load_voice_config()["usar_dialogo_eleven_v3"]())
+    def test_dialogue_can_be_disabled_or_mismatched(self):
+        os.environ["ELEVEN_AUDIO_MODEL"] = "eleven_multilingual_v2"
         os.environ["ELEVEN_AUDIO_DIALOGUE_ENABLED"] = "true"
-        self.assertTrue(load_voice_config()["usar_dialogo_eleven_v3"]())
+        self.assertFalse(load_voice_config()["usar_dialogo_eleven"]())
+        os.environ["ELEVEN_AUDIO_MODEL"] = "eleven_v4"
+        os.environ["ELEVEN_AUDIO_DIALOGUE_MODEL"] = "eleven_v3"
+        self.assertFalse(load_voice_config()["usar_dialogo_eleven"]())
+        os.environ["ELEVEN_AUDIO_DIALOGUE_MODEL"] = "eleven_v4"
+        os.environ["ELEVEN_AUDIO_DIALOGUE_ENABLED"] = "false"
+        self.assertFalse(load_voice_config()["usar_dialogo_eleven"]())
+
+    def test_v3_dialogue_remains_supported(self):
+        os.environ.update({
+            "ELEVEN_AUDIO_MODEL": "eleven_v3",
+            "ELEVEN_AUDIO_DIALOGUE_MODEL": "eleven_v3",
+            "ELEVEN_AUDIO_DIALOGUE_ENABLED": "true",
+        })
+        self.assertTrue(load_voice_config()["usar_dialogo_eleven"]())
 
     def test_environment_can_override_ids_and_individual_speeds(self):
         os.environ.update({
@@ -98,8 +112,8 @@ class PodcastVoiceSettingsTest(unittest.TestCase):
         config = load_voice_config()
         self.assertEqual(config["parametros_tts_podcast"]("HOST")["language_code"], "pt")
 
-    def test_v3_fallback_does_not_send_unsupported_v2_language_override(self):
-        os.environ.update({"ELEVEN_AUDIO_MODEL": "eleven_v3", "ELEVEN_AUDIO_DIALOGUE_ENABLED": "true"})
+    def test_v4_fallback_does_not_send_unsupported_v2_language_override(self):
+        os.environ.update({"ELEVEN_AUDIO_MODEL": "eleven_v4", "ELEVEN_AUDIO_DIALOGUE_MODEL": "eleven_v4", "ELEVEN_AUDIO_DIALOGUE_ENABLED": "true"})
         params = load_voice_config()["parametros_tts_podcast"]("COHOST")
         self.assertEqual(params["model_id"], "eleven_multilingual_v2")
         self.assertNotIn("language_code", params)

@@ -122,11 +122,11 @@ def _float_env(name, default, minimum=0.0, maximum=1.0):
 
 
 ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY")
-ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST") or "L0Dsvb3SLTyegXwtm47J"
+ELEVEN_VOICE_ID_HOST = os.environ.get("ELEVEN_VOICE_ID_HOST") or "NFmEzNOony1UsEJGXLth"
 ELEVEN_VOICE_ID_COHOST = os.environ.get("ELEVEN_VOICE_ID_COHOST") or "uYXf8XasLslADfZ2MB4u"
-ELEVEN_AUDIO_MODEL = os.environ.get("ELEVEN_AUDIO_MODEL") or "eleven_multilingual_v2"
-ELEVEN_AUDIO_DIALOGUE_ENABLED = _bool_env("ELEVEN_AUDIO_DIALOGUE_ENABLED", False)
-ELEVEN_AUDIO_DIALOGUE_MODEL = os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v3")
+ELEVEN_AUDIO_MODEL = os.environ.get("ELEVEN_AUDIO_MODEL") or "eleven_v4"
+ELEVEN_AUDIO_DIALOGUE_ENABLED = _bool_env("ELEVEN_AUDIO_DIALOGUE_ENABLED", True)
+ELEVEN_AUDIO_DIALOGUE_MODEL = os.environ.get("ELEVEN_AUDIO_DIALOGUE_MODEL", "eleven_v4")
 ELEVEN_AUDIO_FALLBACK_MODEL = os.environ.get("ELEVEN_AUDIO_FALLBACK_MODEL", "eleven_multilingual_v2")
 ELEVEN_AUDIO_LANGUAGE_CODE = os.environ.get("ELEVEN_AUDIO_LANGUAGE_CODE", "pt")
 ELEVEN_AUDIO_DIALOGUE_MAX_CHARS = _int_env("ELEVEN_AUDIO_DIALOGUE_MAX_CHARS", 1800)
@@ -139,9 +139,19 @@ if ELEVENLABS_API_KEY:
     print(f"   COHOST: {ELEVEN_VOICE_ID_COHOST}")
 
 
+def usar_dialogo_eleven():
+    """Ativa Text-to-Dialogue para os modelos que suportam diálogo multi-voz."""
+    modelos_dialogo = {"eleven_v3", "eleven_v4"}
+    return (
+        ELEVEN_AUDIO_MODEL in modelos_dialogo
+        and ELEVEN_AUDIO_DIALOGUE_MODEL == ELEVEN_AUDIO_MODEL
+        and ELEVEN_AUDIO_DIALOGUE_ENABLED
+    )
+
+
+# Compatibilidade com integrações antigas que ainda importam o nome v3.
 def usar_dialogo_eleven_v3():
-    # Uma flag legada no Railway não pode substituir o modelo escolhido.
-    return ELEVEN_AUDIO_MODEL == "eleven_v3" and ELEVEN_AUDIO_DIALOGUE_ENABLED
+    return usar_dialogo_eleven()
 
 
 def parametros_tts_podcast(speaker):
@@ -152,7 +162,7 @@ def parametros_tts_podcast(speaker):
 
     model_id = (
         ELEVEN_AUDIO_FALLBACK_MODEL
-        if ELEVEN_AUDIO_MODEL == "eleven_v3"
+        if usar_dialogo_eleven()
         else ELEVEN_AUDIO_MODEL
     )
     params = {
@@ -1052,7 +1062,7 @@ def normalizar_dialogo_para_audio(dialogo):
     return dialogo_norm
 
 
-def _agrupar_dialogo_para_v3(dialogo, limite_chars=1800):
+def _agrupar_dialogo_para_dialogue(dialogo, limite_chars=1800):
     grupos = []
     atual = []
     chars_atuais = 0
@@ -1073,12 +1083,12 @@ def _agrupar_dialogo_para_v3(dialogo, limite_chars=1800):
     return grupos
 
 
-def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_texto=False):
+def gerar_dialogo_com_eleven(dialogo, caminho_saida, seed=None, preservar_texto=False):
     """
-    Usa o endpoint Text to Dialogue do Eleven v3.
+    Usa o endpoint Text to Dialogue do Eleven v3 ou v4.
     """
-    if not usar_dialogo_eleven_v3():
-        raise ValueError("Eleven v3 não é o modo de áudio selecionado para o podcast.")
+    if not usar_dialogo_eleven():
+        raise ValueError("Eleven v3/v4 não é o modo de áudio selecionado para o podcast.")
     if not ELEVENLABS_API_KEY:
         raise ValueError("Sem chave ElevenLabs configurada.")
 
@@ -1086,7 +1096,7 @@ def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_tex
     if not dialogo_audio:
         raise ValueError("Dialogo vazio para audio.")
 
-    grupos = _agrupar_dialogo_para_v3(
+    grupos = _agrupar_dialogo_para_dialogue(
         dialogo_audio,
         limite_chars=max(500, ELEVEN_AUDIO_DIALOGUE_MAX_CHARS),
     )
@@ -1117,7 +1127,10 @@ def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_tex
         response = requests.post(endpoint, headers=headers, json=payload, timeout=180)
         if response.status_code >= 400:
             detalhe = response.text[:500] if response.text else "sem detalhe"
-            raise RuntimeError(f"Eleven v3 dialogue falhou ({response.status_code}): {detalhe}")
+            raise RuntimeError(
+                f"Eleven {ELEVEN_AUDIO_DIALOGUE_MODEL} dialogue falhou "
+                f"({response.status_code}): {detalhe}"
+            )
 
         if len(grupos) == 1:
             caminho_parte = caminho_saida
@@ -1140,6 +1153,16 @@ def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_tex
 
     combinado.export(caminho_saida, format="mp3")
     return caminho_saida, dialogo_audio
+
+
+def gerar_dialogo_com_eleven_v3(dialogo, caminho_saida, seed=None, preservar_texto=False):
+    """Compatibilidade com chamadas antigas; usa o modelo de diálogo configurado."""
+    return gerar_dialogo_com_eleven(
+        dialogo,
+        caminho_saida,
+        seed=seed,
+        preservar_texto=preservar_texto,
+    )
 
 
 def dividir_texto(texto, limite=4096):
@@ -1975,7 +1998,9 @@ def rodar_boletim(opcoes=None):
         elif roteiros_audio:
             yield "🎙️ Gerando Áudio (ElevenLabs)..."
             yield f"   - Modelo selecionado: {ELEVEN_AUDIO_MODEL}."
-            if not usar_dialogo_eleven_v3():
+            if usar_dialogo_eleven():
+                yield f"   - Dialogue {ELEVEN_AUDIO_DIALOGUE_MODEL} ativo para Ivo e Manu (síntese multi-voz com maior expressividade)."
+            if not usar_dialogo_eleven():
                 for speaker, nome in (("HOST", "Ivo"), ("COHOST", "Manu")):
                     params_voz = parametros_tts_podcast(speaker)
                     settings_voz = params_voz["voice_settings"]
@@ -2022,10 +2047,10 @@ def rodar_boletim(opcoes=None):
                     dialogo_audio = dialogo if audio_canonico else normalizar_dialogo_para_audio(dialogo)
                     total_chars_elevenlabs += sum(len(fala.get("text", "")) for fala in dialogo_audio)
 
-                    usou_dialogue_v3 = False
-                    if usar_dialogo_eleven_v3():
+                    usou_dialogue = False
+                    if usar_dialogo_eleven():
                         try:
-                            caminho_gerado, _ = gerar_dialogo_com_eleven_v3(
+                            caminho_gerado, _ = gerar_dialogo_com_eleven(
                                 dialogo_audio,
                                 caminho_estudo,
                                 preservar_texto=audio_canonico,
@@ -2037,19 +2062,26 @@ def rodar_boletim(opcoes=None):
                             )
                             audio_paths.append(caminho_gerado)
                             estudos_audio_gerados += 1
-                            usou_dialogue_v3 = True
+                            usou_dialogue = True
 
                             if opcoes.get('firebase'):
                                 try:
                                     from firebase_service import upload_file
-                                    dest_blob = f"audios_raw/{hoje}/estudo{estudo_idx+1}_dialogue_v3.mp3"
+                                    dest_blob = (
+                                        f"audios_raw/{hoje}/estudo{estudo_idx+1}_"
+                                        f"dialogue_{ELEVEN_AUDIO_DIALOGUE_MODEL}.mp3"
+                                    )
                                     upload_file(caminho_gerado, dest_blob)
                                 except Exception as e_upload:
-                                    print(f"⚠️ Erro upload audio v3: {e_upload}")
-                        except Exception as e_v3:
-                            print(f"⚠️ Eleven v3 falhou no estudo {estudo_idx+1}, usando fallback: {formatar_erro_elevenlabs(e_v3)}")
+                                    print(f"⚠️ Erro upload audio dialogue: {e_upload}")
+                        except Exception as e_dialogue:
+                            print(
+                                f"⚠️ Eleven {ELEVEN_AUDIO_DIALOGUE_MODEL} falhou no estudo "
+                                f"{estudo_idx+1}, usando fallback: "
+                                f"{formatar_erro_elevenlabs(e_dialogue)}"
+                            )
 
-                    if usou_dialogue_v3:
+                    if usou_dialogue:
                         continue
 
                     estudo_audios = []

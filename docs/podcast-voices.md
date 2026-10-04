@@ -4,8 +4,8 @@ Configuração solicitada em 11/09/2026, exclusiva do áudio do podcast:
 
 | Apresentador | Voz | ID | Modelo | Velocidade | Estabilidade | Similaridade | Estilo |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ivo | Archer | `L0Dsvb3SLTyegXwtm47J` | `eleven_multilingual_v2` | 1.1 | 100% | 100% | 0% |
-| Manu | Hope | `uYXf8XasLslADfZ2MB4u` | `eleven_multilingual_v2` | 1.1 | 100% | 100% | 0% |
+| Ivo | Voz brasileira selecionada | `NFmEzNOony1UsEJGXLth` | `eleven_v4` / Dialogue | 1.1 | 100% | 100% | 0% |
+| Manu | Hope | `uYXf8XasLslADfZ2MB4u` | `eleven_v4` / Dialogue | 1.1 | 100% | 100% | 0% |
 
 Após a primeira prévia, a velocidade de ambos foi aumentada para 1.1 a pedido do usuário.
 
@@ -19,10 +19,12 @@ ao ElevenLabs em `voice_settings` para cada apresentador.
 Depois de publicar o código, atualizar as variáveis no serviço do backend:
 
 ```dotenv
-ELEVEN_VOICE_ID_HOST=L0Dsvb3SLTyegXwtm47J
+ELEVEN_VOICE_ID_HOST=NFmEzNOony1UsEJGXLth
 ELEVEN_VOICE_ID_COHOST=uYXf8XasLslADfZ2MB4u
-ELEVEN_AUDIO_MODEL=eleven_multilingual_v2
-ELEVEN_AUDIO_DIALOGUE_ENABLED=false
+ELEVEN_AUDIO_MODEL=eleven_v4
+ELEVEN_AUDIO_DIALOGUE_ENABLED=true
+ELEVEN_AUDIO_DIALOGUE_MODEL=eleven_v4
+ELEVEN_AUDIO_FALLBACK_MODEL=eleven_multilingual_v2
 ELEVEN_VOICE_SPEED_HOST=1.1
 ELEVEN_VOICE_SPEED_COHOST=1.1
 ELEVEN_VOICE_STABILITY=1.0
@@ -35,12 +37,12 @@ Esses valores são também os novos padrões do código. Variáveis já existent
 no Railway sobrescrevem os padrões: os IDs antigos precisam ser atualizados.
 A edição do `.env` local não altera o Railway. Não é preciso mudar a chave de API.
 
-`ELEVEN_AUDIO_MODEL` seleciona o modelo principal. Uma antiga configuração
-`ELEVEN_AUDIO_DIALOGUE_ENABLED=true` não ativa v3 enquanto o modelo selecionado
-for Multilingual v2. Para habilitar v3 no futuro, é necessário selecionar
-explicitamente `ELEVEN_AUDIO_MODEL=eleven_v3` e ativar a flag de diálogo.
-`ELEVEN_AUDIO_FALLBACK_MODEL` só seleciona o TTS alternativo no modo v3;
-não substitui o modelo principal v2.
+`ELEVEN_AUDIO_MODEL=eleven_v4` e `ELEVEN_AUDIO_DIALOGUE_ENABLED=true` ativam o
+Text to Dialogue para Ivo e Manu. O pipeline envia as duas vozes em cada bloco
+para permitir pausas, alternância e maior variação emocional. Se a chamada v4
+falhar, o estudo usa o `ELEVEN_AUDIO_FALLBACK_MODEL` para não perder a execução.
+`ELEVEN_AUDIO_FALLBACK_MODEL` só seleciona o TTS alternativo no modo Dialogue;
+não substitui o modelo principal.
 
 Os percentuais são enviados na escala de **0 a 1**, e não de 0 a 100.
 As velocidades aceitas pela configuração estão entre 0.7 e 1.2.
