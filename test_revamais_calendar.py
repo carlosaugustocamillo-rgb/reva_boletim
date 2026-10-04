@@ -8,8 +8,11 @@ def load_calendar_helpers():
     source = Path("revamais_service.py").read_text(encoding="utf-8")
     module = ast.parse(source)
     needed = {
+        "_normalize_calendar_title",
         "_extract_calendar_title",
+        "_extract_calendar_id",
         "_parse_calendar_date",
+        "_coerce_completed_indices",
         "_compute_next_pending_index",
     }
     funcs = [
@@ -21,12 +24,14 @@ def load_calendar_helpers():
         "_today_for_calendar": lambda: date(2026, 9, 8),
     }
     exec(compile(ast.Module(body=funcs, type_ignores=[]), "calendar_helpers", "exec"), namespace)
-    return namespace["_compute_next_pending_index"]
+    return namespace
 
 
 class RevaMaisCalendarSelectionTest(unittest.TestCase):
     def setUp(self):
-        self.compute_next_pending_index = load_calendar_helpers()
+        helpers = load_calendar_helpers()
+        self.compute_next_pending_index = helpers["_compute_next_pending_index"]
+        self.coerce_completed_indices = helpers["_coerce_completed_indices"]
 
     def test_prefers_pending_item_from_today_over_old_backlog(self):
         rows = [
@@ -72,6 +77,45 @@ class RevaMaisCalendarSelectionTest(unittest.TestCase):
         )
 
         self.assertEqual(current, 2)
+
+    def test_completed_ids_survive_calendar_reordering(self):
+        rows = [
+            {"ID": "new-topic", "Title": "New topic"},
+            {"ID": "published-topic", "Title": "Published topic"},
+        ]
+
+        completed = self.coerce_completed_indices(
+            {"completed_ids": ["published-topic"], "completed_indices": [0]},
+            rows,
+        )
+
+        self.assertEqual(completed, {1})
+
+    def test_legacy_completed_indices_remain_supported(self):
+        rows = [
+            {"Title": "Published topic"},
+            {"Title": "Pending topic"},
+        ]
+
+        completed = self.coerce_completed_indices(
+            {"completed_indices": [0]},
+            rows,
+        )
+
+        self.assertEqual(completed, {0})
+
+    def test_status_column_overrides_stale_legacy_indices_during_migration(self):
+        rows = [
+            {"ID": "published-topic", "Title": "Published", "Status": "Concluído"},
+            {"ID": "planned-topic", "Title": "Planned", "Status": "Planejado"},
+        ]
+
+        completed = self.coerce_completed_indices(
+            {"completed_indices": [1, 99]},
+            rows,
+        )
+
+        self.assertEqual(completed, {0})
 
     def test_generation_does_not_consume_calendar_before_publication(self):
         source = Path("revamais_service.py").read_text(encoding="utf-8")

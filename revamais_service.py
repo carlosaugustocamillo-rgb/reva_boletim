@@ -1666,6 +1666,20 @@ def _extract_calendar_title(row):
     return row.get("Title", row.get("Theme", "")).strip()
 
 
+def _extract_calendar_id(row):
+    explicit_id = str(
+        row.get("ID")
+        or row.get("Id")
+        or row.get("id")
+        or ""
+    ).strip()
+    if explicit_id:
+        return explicit_id.lower()
+
+    title = _normalize_calendar_title(_extract_calendar_title(row))
+    return f"title:{title}" if title else ""
+
+
 def _parse_calendar_date(row):
     raw_date = str(row.get("Date", "")).strip()
     if not raw_date:
@@ -1711,8 +1725,29 @@ def _load_revamais_calendar_rows():
 
 def _coerce_completed_indices(state_data, rows):
     total_linhas = len(rows)
-    raw_completed = state_data.get("completed_indices") if isinstance(state_data, dict) else None
-    completed = set()
+    state_data = state_data if isinstance(state_data, dict) else {}
+    raw_completed_ids = state_data.get("completed_ids")
+    raw_completed = state_data.get("completed_indices")
+    has_status_column = any("Status" in row for row in rows)
+    completed = {
+        idx for idx, row in enumerate(rows)
+        if str(row.get("Status", "")).strip().casefold()
+        in {"concluído", "concluido", "done"}
+    }
+
+    if isinstance(raw_completed_ids, list):
+        completed_ids = {
+            str(item).strip().lower()
+            for item in raw_completed_ids
+            if str(item).strip()
+        }
+        for idx, row in enumerate(rows):
+            if _extract_calendar_id(row) in completed_ids:
+                completed.add(idx)
+        return completed
+
+    if has_status_column:
+        return completed
 
     if isinstance(raw_completed, list):
         for item in raw_completed:
@@ -1775,6 +1810,11 @@ def _build_revamais_firestore_state(next_index, rows, source, completed_indices=
         "next_title": next_title,
         "next_format": next_format,
         "completed_indices": sorted(completed_indices),
+        "completed_ids": sorted(
+            calendar_id
+            for idx in completed_indices
+            if (calendar_id := _extract_calendar_id(rows[idx]))
+        ),
         "total_rows": total_linhas,
         "state_source": source,
         "last_updated": datetime.now().isoformat(),
@@ -1790,6 +1830,16 @@ def _load_revamais_calendar_state(rows):
     snapshot = doc_ref.get()
     if snapshot.exists:
         state = snapshot.to_dict() or {}
+        if "completed_ids" not in state:
+            completed_indices = _coerce_completed_indices(state, rows)
+            migration = _build_revamais_firestore_state(
+                int(state.get("next_index", 0) or 0),
+                rows,
+                source="migrated_to_stable_ids",
+                completed_indices=completed_indices,
+            )
+            state.update(migration)
+            doc_ref.set(migration, merge=True)
         next_index = int(state.get("next_index", 0) or 0)
         print(f"📊 Estado Firestore carregado. next_index={next_index}")
         return doc_ref, state
