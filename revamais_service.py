@@ -7,6 +7,7 @@ import html
 import re
 from io import BytesIO
 from datetime import datetime, timedelta, date
+from zoneinfo import ZoneInfo
 from dotenv import load_dotenv
 import google.generativeai as genai
 from openai import OpenAI
@@ -1692,7 +1693,7 @@ def _parse_calendar_date(row):
 
 
 def _today_for_calendar():
-    return datetime.now(pytz.timezone("America/Sao_Paulo")).date()
+    return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
 
 def _resolve_instagram_format(row=None):
