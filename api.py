@@ -150,14 +150,14 @@ def load_task(task_id):
         print(f"Erro ao carregar tarefa {task_id}: {e}")
         return None
 
-def processar_boletim_background(task_id: str, opcoes: dict):
+def processar_boletim_background(task_id: str, opcoes: dict, pipeline=None):
     """Função wrapper que roda o boletim e salva logs em arquivo."""
     # Estado inicial
     task_state = {"status": "running", "logs": [], "result": None}
     save_task(task_id, task_state)
     
     try:
-        for log_msg in rodar_boletim(opcoes):
+        for log_msg in (pipeline or rodar_boletim)(opcoes):
             # Verifica se foi solicitado cancelamento
             current_state = load_task(task_id)
             if current_state and current_state.get("status") == "canceling":
@@ -541,6 +541,51 @@ def iniciar_boletim(
         "status": "started",
         "message": "Boletim iniciado em segundo plano. Verifique o status com o ID fornecido."
     }
+
+
+class PodcastTopicSearchInput(BaseModel):
+    tema_podcast: str = Field(min_length=1, max_length=300)
+    orientacoes_podcast: str = Field(default="", max_length=3000)
+
+
+class PodcastTopicScriptInput(PodcastTopicSearchInput):
+    curadoria_tema_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    artigos_podcast_aprovados: list[str] = Field(min_length=1, max_length=6)
+    contexto_pubmed_manual: dict | None = None
+    referencias_pubmed: bool = True
+
+
+def processar_podcast_tema_background(task_id: str, opcoes: dict):
+    from podcast_topic import run_topic
+    from boletim_service import BASE_DIR, client
+    # Share task status/cancellation only. Never enter rodar_boletim here.
+    processar_boletim_background(task_id, opcoes,
+                                pipeline=lambda options: run_topic(options, BASE_DIR, client))
+
+
+def queue_podcast_topic(payload, background_tasks, *, search_only):
+    from podcast_topic import validate_request
+    options = {**model_to_dict(payload), 'modo_podcast': 'tema',
+               'somente_curadoria': search_only}
+    try:
+        options.update(validate_request(options))
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
+    task_id = str(uuid.uuid4())
+    save_task(task_id, {"status": "queued", "logs": ["Busca temática independente do boletim semanal."], "result": None})
+    background_tasks.add_task(processar_podcast_tema_background, task_id, options)
+    return {"task_id": task_id, "status": "started", "modo_podcast": "tema",
+            "message": "Busca temática iniciada." if search_only else "Roteiro temático iniciado."}
+
+
+@app.post("/podcast-tema/buscar")
+def buscar_podcast_tema(payload: PodcastTopicSearchInput, background_tasks: BackgroundTasks):
+    return queue_podcast_topic(payload, background_tasks, search_only=True)
+
+
+@app.post("/podcast-tema/gerar-roteiro")
+def gerar_podcast_tema(payload: PodcastTopicScriptInput, background_tasks: BackgroundTasks):
+    return queue_podcast_topic(payload, background_tasks, search_only=False)
 
 
 @app.post("/importar-connected-papers")

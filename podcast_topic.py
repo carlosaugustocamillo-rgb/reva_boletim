@@ -2,6 +2,7 @@
 import json
 import re
 import uuid
+import unicodedata
 from pathlib import Path
 
 import podcast_editorial
@@ -32,15 +33,47 @@ def validate_request(body):
             'roteiro': True}
 
 
+def _normalized_title(value):
+    return ' '.join(re.findall(r'\w+', unicodedata.normalize('NFKC', value).casefold()))
+
+
 def search_articles(theme):
-    # Reuse Reva+'s query builder, with a relevance-ranked search unrestricted
-    # by the weekly newsletter date window or exercise/design filters.
+    """Search only the supplied input, never weekly queries or publication dates.
+
+    Resolve a pasted citation before general thematic expansion so the requested
+    paper is not lost among the first 30 papers of a broader keyword search.
+    """
+    from Bio import Entrez
+    from boletim_service import buscar_info_estruturada
     from revamais_service import gerar_query_pubmed_tema
-    from boletim_service import Entrez, buscar_info_estruturada
-    query = gerar_query_pubmed_tema(theme)
-    with Entrez.esearch(db='pubmed', term=query, retmax=30, sort='relevance') as handle:
-        ids = Entrez.read(handle)['IdList']
-    articles = buscar_info_estruturada(ids) if ids else []
+
+    def search(query):
+        with Entrez.esearch(db='pubmed', term=query, retmax=30, sort='relevance') as handle:
+            ids = Entrez.read(handle)['IdList']
+        return buscar_info_estruturada(ids) if ids else []
+
+    value = theme.strip()
+    pmid = re.fullmatch(r'(?:PMID:\s*|https?://pubmed\.ncbi\.nlm\.nih\.gov/)?(\d{1,9})/?', value, re.I)
+    doi = re.fullmatch(r'(?:https?://doi\.org/|doi:\s*)?(10\.\d{4,9}/[^\s"]+)', value, re.I)
+    if pmid or doi:
+        query = f'{pmid.group(1)}[UID]' if pmid else f'"{doi.group(1)}"[AID]'
+        articles = search(query)
+    else:
+        title = value.replace('"', '').strip().rstrip('.')
+        # Full quoted titles may be absent from PubMed's phrase index. Match
+        # title words first, then verify the complete normalized title locally.
+        stopwords = {'a', 'an', 'the', 'of', 'to', 'in', 'and', 'with', 'for', 'on', 'by', 'from', 'at'}
+        words = list(dict.fromkeys(w for w in _normalized_title(title).split() if w not in stopwords))
+        if not words:
+            raise ValueError('Informe um tema ou título com palavras específicas.')
+        title_query = ' AND '.join(f'{word}[Title]' for word in words)
+        exact = [a for a in search(title_query)
+                 if _normalized_title(a.get('titulo', '')) == _normalized_title(title)]
+        if exact:
+            query, articles = title_query, exact
+        else:
+            query = gerar_query_pubmed_tema(value)
+            articles = search(query)
     return query, [a for a in articles if a.get('resumo_original', '').strip()]
 
 
@@ -50,8 +83,9 @@ def run_topic(options, base_dir, client):
     directory.mkdir(parents=True, exist_ok=True)
     theme = options['tema_podcast']
     if options.get('somente_curadoria'):
-        yield f'🔎 Buscando referências para o tema: {theme}'
+        yield f'🔎 Nova busca exclusiva no PubMed: {theme} (sem limite de data; sem consultas do boletim semanal).'
         query, articles = search_articles(theme)
+        yield f'Consulta utilizada: {query}'
         if not articles:
             yield 'Nenhum artigo com resumo encontrado. Ajuste o tema e busque novamente.'
         selection_id = uuid.uuid4().hex
@@ -60,6 +94,7 @@ def run_topic(options, base_dir, client):
         yield {'tipo': 'curadoria_podcast', 'modo_podcast': 'tema', 'tema_podcast': theme,
                'orientacoes_podcast': options['orientacoes_podcast'],
                'curadoria_tema_id': selection_id, 'artigos_sugeridos': articles, 'limite': 6,
+               'busca': {'origem': 'tema', 'consulta': query, 'sem_limite_data': True},
                'mensagem': 'Selecione até seis fontes para o episódio temático.' if articles else
                            'Nenhum artigo com resumo encontrado. Ajuste o tema e busque novamente.'}
         return

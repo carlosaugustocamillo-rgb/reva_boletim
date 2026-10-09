@@ -206,18 +206,32 @@ orientações de até 3.000 caracteres. Busque referências, selecione de um a s
 artigos e prepare o contexto/PDFs com os controles existentes. Depois gere o
 roteiro, revise o parecer, edite se necessário e aprove para gerar/publicar áudio.
 
-A busca temática reutiliza a construção de consulta do Reva+, consulta até 30
-resultados do PubMed por relevância, sem janela semanal, e oferece artigos com
-resumo. Não movimenta o calendário do Reva+ nem gera campanhas, resumos de
+A busca temática primeiro tenta localizar um título completo, PMID, link PubMed
+ou DOI. Para títulos, pesquisa palavras no campo Title e confere o título
+normalizado, sem depender do índice de frases do PubMed. Quando não encontra
+um título exato, usa a construção de consulta temática do Reva+ somente sobre
+o texto informado. Consulta até 30 resultados por relevância, sem janela semanal,
+e oferece artigos com resumo. Não movimenta o calendário do Reva+ nem gera campanhas, resumos de
 boletim ou rascunhos WhatsApp. Zero resultados exige ajustar o tema; não há
 fallback para artigos da semana. Tema alterado invalida a seleção anterior.
 
-`POST /iniciar-boletim` recebe `modo_podcast: "tema"`, `tema_podcast` e
-`orientacoes_podcast`. Com `somente_curadoria: true`, retorna via status da tarefa
-`curadoria_tema_id` e `artigos_sugeridos`. Para gerar, envie esse identificador,
-`artigos_podcast_aprovados` (PMIDs da seleção) e, opcionalmente,
-`contexto_pubmed_manual`. O servidor persiste os candidatos em
-`data/podcast_topics/<uuid>.json` e valida que o tema e os PMIDs correspondam.
+A tela usa endpoints exclusivos, sem passar pelo pipeline do boletim:
+
+- `POST /podcast-tema/buscar`: `tema_podcast` obrigatório e `orientacoes_podcast` opcional. A tarefa retorna `curadoria_tema_id`, `artigos_sugeridos`
+  e `busca` com consulta utilizada, `origem: "tema"` e `sem_limite_data: true`.
+- `POST /podcast-tema/gerar-roteiro`: tema, orientações, identificador da curadoria,
+  `artigos_podcast_aprovados` (de um a seis PMIDs), `referencias_pubmed` e
+  `contexto_pubmed_manual` opcional. Exige candidatos daquela busca.
+
+As duas rotas compartilham apenas status e cancelamento com o boletim; o worker
+chama `run_topic` diretamente. Flags de boletim enviadas pelo cliente não
+reativam busca semanal ou campanhas. O painel recusa respostas incompatíveis
+com o modo temático e apresenta a consulta da nova busca. Um backend antigo sem
+essas rotas produz erro explícito, sem fallback para `/iniciar-boletim`.
+O servidor persiste os candidatos em `data/podcast_topics/<uuid>.json` e valida
+que o tema e os PMIDs correspondam. O contrato temático anterior de
+`/iniciar-boletim` continua aceito para compatibilidade; o fluxo semanal permanece
+nesse endpoint com seus filtros e janela de datas anteriores.
 
 O roteiro guarda `episode_context`, incluído no hash de aprovação e preservado
 nas edições. Planejamento e escrita recebem o tema e as orientações sem relaxar
@@ -232,7 +246,7 @@ Implantar juntos o backend `reva_boletim` e o frontend `revalidatie/project`.
 Não são necessárias novas variáveis de ambiente. A geração de texto e áudio
 continua utilizando os provedores e créditos já configurados.
 
-Testes adicionais: `python -m unittest test_podcast_topic`. Usam serviços
+Testes adicionais: `python -m unittest test_podcast_topic test_podcast_topic_search`. Usam serviços
 simulados e verificam seleção inválida, tema vazio, ausência de resultados,
 persistência nas edições, aprovação, texto exato enviado à síntese, arquivos
 identificados por episódio, RSS e ausência de campanhas/WhatsApp.
