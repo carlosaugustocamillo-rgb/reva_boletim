@@ -83,6 +83,15 @@ class EditorialApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'test-only')
 
+    def test_thematic_audio_download_serves_unique_episode(self):
+        directory = self.root / 'data' / 'audios'
+        directory.mkdir()
+        filename = 'episodio_boletim_2026-09-12_' + 'a' * 32 + '.mp3'
+        (directory / filename).write_bytes(b'thematic-test')
+        response = self.client.get('/baixar-audio-podcast/' + filename)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, b'thematic-test')
+
     def test_blocked_draft_is_readable_but_cannot_be_approved(self):
         self.draft['status'] = 'blocked'
         self.draft['audit']['issues'] = [{'severity': 'blocking', 'location': 'PMID 100', 'reason': 'Ressalva divergente'}]

@@ -1452,19 +1452,37 @@ def rodar_boletim(opcoes=None):
         }
 
     opcoes = dict(opcoes)  # Do not mutate caller options during the approval gate.
+    # Recover thematic isolation from the approved server-side draft, including
+    # requests made after reloading the panel or with contradictory client flags.
+    approved_topic_draft = None
+    if opcoes.get('roteiro_aprovado_id'):
+        try:
+            candidate = podcast_editorial.load_draft(BASE_DIR, opcoes['roteiro_aprovado_id'])
+        except (ValueError, FileNotFoundError):
+            candidate = {}
+        if candidate.get('episode_context'):
+            approved_topic_draft = podcast_editorial.approved_audio(
+                BASE_DIR, candidate['id'], opcoes.get('roteiro_aprovado_sha256'))
+            opcoes.update(resumos=False, roteiro=False, mailchimp=False, audio=True,
+                          modo_podcast='tema', somente_curadoria=False)
+    if opcoes.get('modo_podcast') == 'tema' and not approved_topic_draft:
+        from podcast_topic import run_topic
+        yield from run_topic(opcoes, BASE_DIR, client)
+        return
     yield f"🚀 Iniciando pipeline com opções: {opcoes}"
 
     hoje = datetime.today().strftime('%Y-%m-%d')
 
+    artifact_ref = f"{hoje}_{approved_topic_draft['id']}" if approved_topic_draft else hoje
     # Paths principais
     boletim_path = os.path.join(BASE_DIR, f"boletim_pubmed_{hoje}.txt")
     revisao_path = os.path.join(BASE_DIR, f"boletim_para_revisao_{hoje}.txt")
     boletim_detalhado_path = os.path.join(BASE_DIR, f"boletim_detalhado_{hoje}.txt")
     roteiro_path = os.path.join(BASE_DIR, f"roteiro_podcast_{hoje}.txt")
-    base_episodio_name = f"episodio_boletim_{hoje}"
+    base_episodio_name = f"episodio_boletim_{artifact_ref}"
     episodio_filename = f"{base_episodio_name}.mp3"
     episodio_path = os.path.join(AUDIO_DIR, episodio_filename) # Usando AUDIO_DIR para manter organizado
-    brief_spotify_path = os.path.join(BASE_DIR, f"brief_spotify_{hoje}.txt")
+    brief_spotify_path = os.path.join(BASE_DIR, f"brief_spotify_{artifact_ref}.txt")
     referencias_pubmed_path = os.path.join(BASE_DIR, "referencias", f"contexto_pubmed_{hoje}.json")
     if not os.path.exists(AUDIO_DIR): os.makedirs(AUDIO_DIR, exist_ok=True)
     
@@ -2068,7 +2086,7 @@ def rodar_boletim(opcoes=None):
                                 try:
                                     from firebase_service import upload_file
                                     dest_blob = (
-                                        f"audios_raw/{hoje}/estudo{estudo_idx+1}_"
+                                        f"audios_raw/{artifact_ref}/estudo{estudo_idx+1}_"
                                         f"dialogue_{ELEVEN_AUDIO_DIALOGUE_MODEL}.mp3"
                                     )
                                     upload_file(caminho_gerado, dest_blob)
@@ -2129,7 +2147,7 @@ def rodar_boletim(opcoes=None):
                         if opcoes.get('firebase'):
                             try:
                                 from firebase_service import upload_file
-                                dest_blob = f"audios_raw/{hoje}/temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3"
+                                dest_blob = f"audios_raw/{artifact_ref}/temp_estudo{estudo_idx+1}_fala{fala_idx+1}.mp3"
                                 upload_file(segmento_path, dest_blob)
                             except Exception as e_upload:
                                 print(f"⚠️ Erro upload audio temp: {e_upload}")
@@ -2192,7 +2210,7 @@ def rodar_boletim(opcoes=None):
                     print(f"🎧 Episódio salvo: {episodio_path}")
                     yield f"💰 Consumo ElevenLabs: {total_chars_elevenlabs} chars."
                     
-                    if opcoes.get('firebase'):
+                    if opcoes.get('firebase') and not approved_topic_draft:
                         # Upload do episódio final
                         from firebase_service import upload_file, update_podcast_feed
                         duracao = len(episodio) / 1000.0
@@ -2315,8 +2333,8 @@ def rodar_boletim(opcoes=None):
                     
                     rss_url = update_podcast_feed(
                         episodio_audio_url=audio_url,
-                        episodio_titulo=f"Boletim {hoje}",
-                        episodio_descricao="Resumo semanal das evidências científicas.",
+                        episodio_titulo=(approved_topic_draft["script"]["title"] if approved_topic_draft else f"Boletim {hoje}"),
+                        episodio_descricao=(brief_spotify_text or approved_topic_draft["episode_context"]["tema"] if approved_topic_draft else "Resumo semanal das evidências científicas."),
                         data_pub=datetime.now(pytz.timezone("America/Sao_Paulo")),
                         duracao_segundos=duracao_seg,
                         tamanho_bytes=tamanho_bytes
@@ -2349,7 +2367,7 @@ def rodar_boletim(opcoes=None):
     # ------------------------------------------------------------------
     # 5.5) INTEGRAÇÃO WHATSAPP (NOVO)
     # ------------------------------------------------------------------
-    if opcoes.get('firebase'):
+    if opcoes.get('firebase') and not approved_topic_draft:
          try:
             from whatsapp_service import create_draft
             yield "📱 Gerando rascunho WhatsApp (Weekly)..."
@@ -2400,7 +2418,7 @@ def rodar_boletim(opcoes=None):
         "episodio_path": episodio_path,
         "brief_spotify_path": brief_spotify_path if brief_spotify_text else None,
         "brief_spotify_text": brief_spotify_text if brief_spotify_text else None,
-        "brief_spotify_download_url": f"/baixar-brief/{hoje}" if brief_spotify_text else None,
+        "brief_spotify_download_url": f"/baixar-brief/{artifact_ref}" if brief_spotify_text else None,
         "referencias_pubmed_path": referencias_pubmed_path if referencias_pubmed_salvas else None,
         "referencias_pubmed_download_url": f"/baixar-referencias-podcast/{hoje}" if referencias_pubmed_salvas else None,
         "referencias_pubmed": contexto_pubmed_report,

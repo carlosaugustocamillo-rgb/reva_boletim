@@ -240,20 +240,23 @@ def transcript(draft):
 
 def fingerprint(draft):
     protected = {k: draft[k] for k in ("version", "model", "evidence", "plan", "script", "audit")}
+    if draft.get("episode_context"):
+        protected["episode_context"] = draft["episode_context"]
     return hashlib.sha256(json.dumps(protected, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def generate_episode_steps(articles, context, client, base_dir=None):
+def generate_episode_steps(articles, context, client, base_dir=None, episode_context=None):
     packet = evidence_packet(articles, context, base_dir=base_dir)
     model = os.environ.get("PODCAST_SCRIPT_MODEL", DEFAULT_MODEL).strip()
     usage = []
+    editorial_context = {"episode_context": episode_context} if episode_context else {}
     pdf_count = sum(s["material"] == "full_text_pdf" for study in packet for s in study["sources"])
     yield f"🧠 Planejando o episódio completo com {model}: {pdf_count} PDF(s) integral(is) e avaliação crítica rastreável..."
-    plan = _request(client, model, "plan", PLAN_SCHEMA, {"evidence": packet}, usage)
+    plan = _request(client, model, "plan", PLAN_SCHEMA, {"evidence": packet, **editorial_context}, usage)
     validate_plan(plan, packet)
     yield "✍️ Escrevendo a conversa completa, incluindo abertura, ressalvas e encerramento..."
     script = _request(client, model, "write", SCRIPT_SCHEMA,
-                      {"evidence": packet, "plan": plan, "target_words": 180 + 280 * len(packet)}, usage)
+                      {"evidence": packet, **editorial_context, "plan": plan, "target_words": 180 + 280 * len(packet)}, usage)
     original_script = script
     repair_attempted = False
     try:
@@ -265,7 +268,7 @@ def generate_episode_steps(articles, context, client, base_dir=None):
             repair_attempted = True
             yield "🛠️ Ajustando uma vez a correspondência entre ressalva e falas, com as mesmas fontes..."
             script = _request(client, model, "write", SCRIPT_SCHEMA,
-                              {"evidence": packet, "plan": plan, "target_words": 180 + 280 * len(packet),
+                              {"evidence": packet, **editorial_context, "plan": plan, "target_words": 180 + 280 * len(packet),
                                "previous_script": original_script, "validation_error": str(mismatch)}, usage)
             validate_script(script, packet)
         yield "🔎 Conferindo afirmações, números, comparações e ressalvas contra as fontes..."
@@ -279,6 +282,8 @@ def generate_episode_steps(articles, context, client, base_dir=None):
     draft = {"id": uuid.uuid4().hex, "version": VERSION, "model": model,
              "created_at": datetime.now(timezone.utc).isoformat(), "status": "blocked" if blocked else "pending_review",
              "evidence": packet, "plan": plan, "script": script, "audit": audit, "usage": usage}
+    if episode_context:
+        draft["episode_context"] = episode_context
     if repair_attempted:
         draft['original_script'] = original_script
     draft['repair_attempted'] = repair_attempted
@@ -363,6 +368,8 @@ def save_edited_draft(base_dir, draft_id, sha256, text):
              "audit": {"issues": [{"severity": "blocking", "location": "Texto editado",
                                    "reason": "Aguardando nova conferência científica do texto editado."}]},
              "usage": []}
+    if previous.get("episode_context"):
+        draft["episode_context"] = previous["episode_context"]
     draft["sha256"] = fingerprint(draft)
     save_draft(base_dir, draft)
     return draft
@@ -417,6 +424,6 @@ def review_payload(draft):
     return {"id": draft["id"], "sha256": draft["sha256"], "status": draft["status"],
             "model": draft["model"], "title": draft["script"]["title"], "text": transcript(draft),
             "plan": draft["plan"], "audit": draft["audit"], "usage": draft["usage"],
-            "evidence": public_evidence,
+            "evidence": public_evidence, "episode_context": draft.get("episode_context"),
             "can_approve": not any(i["severity"] == "blocking" for i in draft["audit"]["issues"]),
             "download_url": f'/podcast-roteiro/{draft["id"]}/texto'}

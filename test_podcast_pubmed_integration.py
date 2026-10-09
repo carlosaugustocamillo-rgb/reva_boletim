@@ -51,7 +51,7 @@ def load_functions(filename, namespace, source=None):
     return namespace
 
 
-def run_pipeline(base_dir, *, related=True, script=True, source=None, options_override=None):
+def run_pipeline(base_dir, *, related=True, script=True, source=None, options_override=None, namespace_override=None):
     anchor = {**ANCHOR, "journal": "Clinical Exercise Journal", "ano": "2026", "volume": "1", "issue": "2", "paginas": "10-20"}
     client = llm([decision()])
     screening_response = client.with_options.return_value.chat.completions.create.return_value
@@ -67,7 +67,7 @@ def run_pipeline(base_dir, *, related=True, script=True, source=None, options_ov
     namespace = {"__file__": str(ROOT / "boletim_service.py"), "os": os, "json": json, "podcast_editorial": podcast_editorial,
                  "re": re, "copy": copy, "datetime": FixedDatetime, "timedelta": timedelta,
                  "pytz": pytz, "BASE_DIR": str(base_dir), "AUDIO_DIR": str(Path(base_dir) / "audios"),
-                 "client": client, "mc": mailchimp, "MC_LIST_ID": "test-list", "MC_FROM_NAME": "Test",
+                 "OPENAI_TRANSLATION_MODEL": "test-translation", "client": client, "mc": mailchimp, "MC_LIST_ID": "test-list", "MC_FROM_NAME": "Test",
                  "MC_REPLY_TO": "test@example.org", "TEMPLATE_HTML_BASE": "<html>{conteudo_aqui}</html>",
                  "CONSULTAS_PRINCIPAIS": ["Exercício: exercise"], "CONSULTAS_DETALHADAS": {"Exercício": "exercise"},
                  **{name: getattr(pubmed_related, name) for name in ("enabled_from_env", "enrich_episode", "context_for_script", "references_for_notes", "save_json")}}
@@ -77,6 +77,7 @@ def run_pipeline(base_dir, *, related=True, script=True, source=None, options_ov
     namespace.update({"buscar_ids": search, "buscar_info_estruturada": lambda _: [copy.deepcopy(anchor)],
                       "traduzir_resumo": translate,
                       "gerar_brief_spotify": lambda **_: "Descrição científica do episódio."})
+    namespace.update(namespace_override or {})
     pubmed = MagicMock()
     pubmed.candidates.return_value = ([candidate()], False)
     options = {"resumos": True, "roteiro": script, "revisao_roteiro": False,

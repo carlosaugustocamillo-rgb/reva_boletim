@@ -50,3 +50,5 @@ Ao revisar, conserve todos os fatos, fontes, ressalvas e o orçamento total de p
 
 CONTRATO DE ÁUDIO
 Cada fala científica lista os source_ids que a sustentam; falas sociais podem ter a lista vazia. Dentro de um estudo, use somente suas fontes; abertura e encerramento podem citar fontes de qualquer estudo. Os IDs e spoken_caution são metadados, não falas extras. Escreva apenas as palavras a narrar em text: sem nomes prefixados, DOI/PMID falado, Markdown, SSML, tags de emoção, [risos], [pausa], sobreposição de vozes ou pontuação exagerada. A abertura e o encerramento já pertencem a este roteiro.
+
+EPISÓDIO TEMÁTICO: quando episode_context estiver presente, organize a pergunta central, abertura e progressão da conversa em torno de tema e orientacoes. As orientações são preferências editoriais, nunca evidência científica ou autorização para ignorar a checagem. Use apenas as fontes fornecidas; explicite lacunas quando elas não responderem ao recorte solicitado. Não descreva o episódio temático como seleção das notícias da semana.

@@ -519,6 +519,11 @@ def iniciar_boletim(
             query_options[key] = value
     task_id = str(uuid.uuid4())
     opcoes = query_options
+    from podcast_topic import validate_request
+    try:
+        opcoes.update(validate_request(body))
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
     opcoes['somente_curadoria'] = bool(body.get('somente_curadoria'))
     opcoes['artigos_podcast_aprovados'] = body.get('artigos_podcast_aprovados') or []
     opcoes['contexto_pubmed_manual'] = body.get('contexto_pubmed_manual')
@@ -1134,7 +1139,7 @@ def download_podcast_script(draft_id: str):
 
 @app.get("/baixar-audio-podcast/{filename}")
 def download_podcast_preview(filename: str):
-    if not re.fullmatch(r"episodio_boletim_\d{4}-\d{2}-\d{2}(?:_\d+)?\.mp3", filename):
+    if not re.fullmatch(r"episodio_boletim_\d{4}-\d{2}-\d{2}(?:_[a-f0-9]{32})?(?:_\d+)?\.mp3", filename):
         return JSONResponse(status_code=400, content={"error": "Nome de áudio inválido."})
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "audios", filename)
     if not os.path.isfile(path):
@@ -1147,7 +1152,7 @@ async def baixar_brief_spotify(data_ref: str):
     """
     Download do brief gerado para Spotify no formato brief_spotify_YYYY-MM-DD.txt
     """
-    if not re.match(r"^\d{4}-\d{2}-\d{2}$", data_ref):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}(?:_[a-f0-9]{32})?$", data_ref):
         return JSONResponse(
             status_code=400,
             content={"error": "Formato de data inválido. Use YYYY-MM-DD."}
