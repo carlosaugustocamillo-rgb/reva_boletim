@@ -81,6 +81,13 @@ class PubMedSimilarInput(BaseModel):
     article: dict = Field(default_factory=dict)
 
 
+class PodcastConsensusInput(BaseModel):
+    relatorio: str = Field(default="", max_length=300_000)
+    pdf_base64: str = Field(default="", max_length=35_000_000)
+    filename: str = "consensus.pdf"
+    tema: str = Field(default="", max_length=3000)
+
+
 # Force rebuild for Python 3.11
 app = FastAPI(title="Revahub")
 
@@ -621,7 +628,30 @@ def preparar_contexto_manual(payload: ManualPodcastContextInput):
     """Valida a seleção manual e monta o contrato usado pelo roteirista."""
     if not payload.main_articles:
         return JSONResponse(status_code=400, content={"error": "Selecione ao menos um artigo principal."})
+    if any(len(refs) > 12 for refs in payload.selected_by_anchor.values()):
+        return JSONResponse(status_code=400, content={"error": "Selecione até 12 fontes complementares por estudo principal."})
     return build_manual_report(payload.main_articles, payload.selected_by_anchor)
+
+
+@app.post("/podcast-consensus")
+def importar_consensus_podcast(payload: PodcastConsensusInput):
+    """Importa texto ou PDF Consensus sem depender de indexação no PubMed."""
+    from podcast_consensus import build_consensus_import
+    from revamais_service import extrair_referencias_consensus
+    from podcast_pdf import load_pdf, source_text
+    try:
+        report = payload.relatorio.strip()
+        if payload.pdf_base64:
+            encoded = payload.pdf_base64.split(",", 1)[-1]
+            data = base64.b64decode(encoded, validate=True)
+            descriptor = save_pdf(BASE_DATA_DIR, data, payload.filename, {"fonte": "Consensus"})
+            report = source_text(load_pdf(BASE_DATA_DIR, descriptor["id"]))
+        if not 80 <= len(report) <= 300_000:
+            raise ValueError("Forneça um relatório Consensus entre 80 e 300 mil caracteres.")
+        parsed = extrair_referencias_consensus(report, tema_usuario=payload.tema, limite_retorno=11)
+        return build_consensus_import(report, parsed)
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": str(error)})
 
 
 @app.post("/buscar-similares-pubmed")

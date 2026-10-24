@@ -202,7 +202,7 @@ def build_manual_report(
                 "desfecho": "revisao_manual",
                 "comparador": "nao_informado",
                 "desenho": "nao_informado",
-                "justificativa": item.get("justificativa_manual", "Selecionada manualmente no Connected Papers."),
+                "justificativa": item.get("justificativa_manual", "Selecionada manualmente para o podcast."),
                 "trecho_ancora": "",
                 "trecho_candidato": "",
                 "diferenca_importante": item.get("limitacao_manual", "Revisão editorial manual necessária."),
@@ -218,7 +218,7 @@ def build_manual_report(
         })
     return {
         "versao": 1,
-        "fonte": "Connected Papers (curadoria manual)",
+        "fonte": "Fontes complementares (curadoria manual)",
         "habilitado": bool(selected_by_anchor),
         "modo": "manual",
         "status": "concluido",

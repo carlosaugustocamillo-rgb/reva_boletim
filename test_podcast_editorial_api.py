@@ -92,16 +92,16 @@ class EditorialApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.content, b'thematic-test')
 
-    def test_blocked_draft_is_readable_but_cannot_be_approved(self):
+    def test_scientific_issues_remain_visible_and_manual_approval_is_allowed(self):
         self.draft['status'] = 'blocked'
         self.draft['audit']['issues'] = [{'severity': 'blocking', 'location': 'PMID 100', 'reason': 'Ressalva divergente'}]
         self.draft['sha256'] = podcast_editorial.fingerprint(self.draft)
         podcast_editorial.save_draft(self.root / 'data', self.draft)
         result = self.client.get('/ultimo-roteiro').json()['editorial']
-        self.assertFalse(result['can_approve'])
+        self.assertTrue(result['can_approve'])
         self.assertTrue(result['text'])
         self.assertEqual(self.client.post(f'/podcast-roteiro/{self.draft["id"]}/aprovar',
-                         json={'sha256': self.draft['sha256']}).status_code, 409)
+                         json={'sha256': self.draft['sha256']}).status_code, 200)
 
     def test_background_completion_reports_partial_or_review_instead_of_success(self):
         tree = ast.parse(Path(__file__).with_name('api.py').read_text())

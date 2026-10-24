@@ -160,7 +160,7 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
                 whatsapp.create_draft.assert_not_called()
                 run['mailchimp'].campaigns.schedule.assert_called_once()
                 self.assertIsNotNone(run['result']['roteiro_editorial'])
-                self.assertEqual(run['result']['roteiro_editorial']['can_approve'], not blocked)
+                self.assertTrue(run['result']['roteiro_editorial']['can_approve'])
                 loaded = podcast_editorial.load_draft(root, draft['id'])
                 self.assertTrue(podcast_editorial.transcript(loaded))
                 self.assertFalse(any('Tentando resgatar' in str(m) for m in run['messages']))
@@ -186,6 +186,9 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         ]
         draft['script']['studies'][0]['spoken_caution'] = 'O resumo não informa. Não podemos avaliar esse aspecto.'
         podcast_editorial.validate_script(draft['script'], draft['evidence'])
+        draft['status'] = 'blocked'
+        draft['audit']['issues'] = [{'severity': 'blocking', 'location': 'Fala 1',
+                                     'reason': 'Informação complementar não localizada no artigo principal.'}]
         draft['sha256'] = podcast_editorial.fingerprint(draft)
         podcast_editorial.save_draft(self.root, draft)
         review = podcast_editorial.review_payload(draft)
@@ -208,6 +211,7 @@ class PodcastPubmedIntegrationTest(unittest.TestCase):
         self.assertIsNotNone(rejected['audio_erro'])
         synth.assert_not_called()
         approved = podcast_editorial.approve_draft(self.root, review['id'], review['sha256'])
+        self.assertTrue(approved['approval']['with_scientific_issues'])
         run['client'].reset_mock()
         run['mailchimp'].reset_mock()
         with redirect_stdout(io.StringIO()):

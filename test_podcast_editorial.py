@@ -130,10 +130,13 @@ class EditorialTest(unittest.TestCase):
         self.assertEqual(saved['status'], 'blocked')
         self.assertEqual(editorial.transcript(saved), 'Ivo: Oi.\n\nManu: Oi.')
         self.assertEqual(editorial.load_draft(self.root, self.draft['id']), self.draft)
-        with self.assertRaises(editorial.EditorialError):
-            editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+        approved = editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+        self.assertTrue(approved['approval']['with_scientific_issues'])
+        self.assertEqual(approved['audit'], saved['audit'])
+        self.assertEqual(editorial.transcript(editorial.approved_audio(self.root, saved['id'], saved['sha256'])),
+                         editorial.transcript(saved))
 
-    def test_manual_scientific_issue_blocks_approval_without_rewriting(self):
+    def test_manual_scientific_issue_allows_explicit_approval_without_rewriting(self):
         editorial.save_draft(self.root, self.draft)
         edited = editorial.save_edited_draft(self.root, self.draft['id'], self.draft['sha256'], 'Ivo: Cura comprovada.\nManu: Sempre.')
         audit = {'issues': [{'severity': 'blocking', 'location': 'Fala 1', 'reason': 'Conclusão não sustentada.'}]}
@@ -142,8 +145,11 @@ class EditorialTest(unittest.TestCase):
         self.assertEqual(request.call_args.args[2], 'audit')
         self.assertEqual(saved['status'], 'blocked')
         self.assertEqual(editorial.transcript(saved), editorial.transcript(edited))
-        with self.assertRaises(editorial.EditorialError):
-            editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+        approved = editorial.approve_draft(self.root, saved['id'], saved['sha256'])
+        self.assertTrue(approved['approval']['with_scientific_issues'])
+        self.assertEqual(approved['audit'], saved['audit'])
+        self.assertEqual(editorial.transcript(editorial.approved_audio(self.root, saved['id'], saved['sha256'])),
+                         editorial.transcript(saved))
 
     def test_metadata_only_not_promoted_to_source_and_manual_mode_preserved(self):
         self.context['estudos'][0]['referencias'][0]['resumo_original'] = ''
@@ -270,11 +276,10 @@ class EditorialTest(unittest.TestCase):
         editorial.save_draft(self.root, draft)
         loaded = editorial.load_draft(self.root, draft['id'])
         self.assertIn('Manu:', editorial.review_payload(loaded)['text'])
-        self.assertFalse(editorial.review_payload(loaded)['can_approve'])
-        with self.assertRaises(editorial.EditorialError):
-            editorial.approve_draft(self.root, draft['id'], draft['sha256'])
+        self.assertTrue(editorial.review_payload(loaded)['can_approve'])
+        editorial.approve_draft(self.root, draft['id'], draft['sha256'])
 
-    def test_audit_outage_preserves_script_but_cannot_be_approved(self):
+    def test_audit_outage_preserves_script_for_manual_approval(self):
         def respond(**kwargs):
             if kwargs['response_format']['json_schema']['name'] == 'podcast_audit':
                 raise TimeoutError('Synthetic timeout')
@@ -309,12 +314,14 @@ class EditorialTest(unittest.TestCase):
         self.assertIn('Manu:', editorial.transcript(approved))
         self.assertNotIn('source_ids', editorial.transcript(approved))
 
-    def test_blocking_audit_and_tampered_content_fail_closed(self):
+    def test_scientific_approval_preserves_issues_and_tampered_content_fails_closed(self):
         self.draft['audit']['issues'] = [{'severity': 'blocking', 'location': '100', 'reason': 'Unsupported result'}]
         self.draft['sha256'] = editorial.fingerprint(self.draft)
         editorial.save_draft(self.root, self.draft)
-        with self.assertRaises(editorial.EditorialError):
-            editorial.approve_draft(self.root, self.draft['id'], self.draft['sha256'])
+        approved = editorial.approve_draft(self.root, self.draft['id'], self.draft['sha256'])
+        self.assertTrue(approved['approval']['with_scientific_issues'])
+        self.assertEqual(approved['audit'], self.draft['audit'])
+        editorial.approved_audio(self.root, self.draft['id'], self.draft['sha256'])
         self.draft['script']['title'] = 'Changed after review'
         editorial.save_draft(self.root, self.draft)
         with self.assertRaises(editorial.EditorialError):

@@ -1862,12 +1862,12 @@ def rodar_boletim(opcoes=None):
                         artigos_podcast, contexto_pubmed_report, client, base_dir=BASE_DIR,
                     )
                     podcast_editorial.save_draft(BASE_DIR, editorial_draft)
-                    if not podcast_editorial.review_payload(editorial_draft)['can_approve']:
+                    if editorial_draft['status'] == 'blocked':
                         editorial_error = ' | '.join(
                             issue['reason'] for issue in editorial_draft['audit']['issues']
                             if issue['severity'] == 'blocking'
                         )
-                        yield f"⚠️ Rascunho preservado para revisão, mas bloqueado para áudio: {editorial_error}"
+                        yield f"⚠️ Rascunho preservado para revisão, com pendências; a aprovação manual pode liberar o áudio: {editorial_error}"
                     else:
                         roteiros_audio = podcast_editorial.dialogues(editorial_draft)
                         titulos_podcast = ["Abertura", *(a.get('titulo', '') for a in artigos_podcast), "Encerramento"]

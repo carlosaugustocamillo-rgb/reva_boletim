@@ -25,7 +25,7 @@ Isso é orçamento de texto, não promessa de duração exata de áudio.
 2. `prompts/podcast/write.txt`: conversa Ivo/Manu completa com abertura e fechamento,
    contexto complementar, transições e ressalvas integradas.
 3. `prompts/podcast/audit.txt`: checagem contra as fontes. Pendências científicas
-   bloqueiam aprovação; observações de estilo ficam para o revisor.
+   ficam visíveis para decisão do revisor, que pode aprovar manualmente a versão.
 
 As etapas aparecem nos logs e oferecem pontos de cancelamento entre chamadas.
 O modelo não navega: usa somente os artigos aprovados e as referências selecionadas.
@@ -54,7 +54,7 @@ chamada. O ajuste já existente de `spoken_caution` usa esse mesmo prompt, para
 preservar o estilo ao corrigir uma divergência. A auditoria procura exposições
 alternadas, perguntas de apresentador, frases densas e cautelas recitadas; indica
 a localização como `note`, sem bloquear a aprovação por preferência de estilo.
-Erros científicos continuam bloqueantes. A auditoria distingue PDF de resumo e
+Pendências científicas continuam destacadas no parecer, sem veto à aprovação manual. A auditoria distingue PDF de resumo e
 não interpreta informação ausente como procedimento que não foi realizado.
 
 O fluxo ativo não usa os reescritores legados de transições nem uma etapa de
@@ -104,7 +104,7 @@ e a leitura/aprovação humana continua obrigatória.
 A comparação da ressalva tolera maiúsculas, espaços e pontuação textual e pode
 abranger falas consecutivas. Não usa similaridade aproximada nem ignora negações
 ou diferenças numéricas. Divergências persistentes identificam o PMID e o texto
-registrado e continuam bloqueando a aprovação.
+registrado e ficam disponíveis para revisão e aprovação manual.
 
 ## Fluxo no painel
 
@@ -133,7 +133,7 @@ automática são refeitas para o texto editado. Essa checagem não garante ausê
 de erro: permanece necessária a revisão humana.
 
 Uma versão em `auditing` não pode ser aprovada. Se a checagem falhar, o texto
-permanece salvo como `blocked` e pode ser editado/salvo novamente. Se o servidor
+permanece salvo como `blocked` e pode ser editado/salvo novamente ou aprovado manualmente após a leitura do aviso. Se o servidor
 reiniciar durante a tarefa em segundo plano, a versão pode permanecer em `auditing`;
 “Revisar último roteiro” recupera o texto, e salvar uma nova tentativa reinicia a
 checagem. O SHA muda com a auditoria, exigindo aprovação da versão atual.
@@ -250,3 +250,25 @@ Testes adicionais: `python -m unittest test_podcast_topic test_podcast_topic_sea
 simulados e verificam seleção inválida, tema vazio, ausência de resultados,
 persistência nas edições, aprovação, texto exato enviado à síntese, arquivos
 identificados por episódio, RSS e ausência de campanhas/WhatsApp.
+
+## Fontes adicionais e decisão editorial humana
+
+A checagem automática é consultiva. `can_approve` permite os estados `blocked`,
+`pending_review` e `approved`; `auditing` aguarda a conclusão para evitar aprovar
+um parecer que ainda está mudando. A aprovação conserva todas as pendências e
+registra `approval.sha256` e `approval.with_scientific_issues`. O áudio continua
+exigindo aprovação explícita e o hash atual, e recebe as falas salvas sem reescrita.
+Esse comportamento também funciona para rascunhos antigos preservados como `blocked`.
+
+Cada cartão oferece “Adicionar fontes: PDFs e Consensus”. É possível anexar PDFs
+de artigos não indexados, colar texto do Consensus ou importar seu PDF. O usuário
+seleciona as fontes importadas antes de preparar novamente o contexto. O limite
+continua sendo 12 fontes complementares por estudo principal.
+
+`POST /podcast-consensus` aceita `relatorio` ou `pdf_base64`, com `filename` e
+`tema` opcionais. Reutiliza a extração do Reva+, mas mantém o relatório completo
+como candidato mesmo quando nenhuma referência for identificada. Sínteses usam
+`consensus_report`/`consensus_extract`, sem promoção a resumo original ou texto
+integral. PDFs de outros artigos usam `/podcast-pdf`, com `source_id` próprio,
+sem necessidade de PMID ou DOI. Todas as fontes selecionadas entram na pauta,
+escrita e auditoria e ficam preservadas no rascunho para a rechecagem de edições.

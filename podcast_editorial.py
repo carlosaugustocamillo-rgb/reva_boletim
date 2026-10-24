@@ -121,6 +121,10 @@ def evidence_packet(articles, context, base_dir=None):
             if pdf and not (_source_keys(pdf.get("source", {})) & _source_keys(item)):
                 raise EditorialError("O PDF anexado não corresponde ao artigo desta fonte.")
             full_text = source_text(pdf) if pdf else ""
+            extract = str(item.get("evidence_content") or "").strip() if index else ""
+            if len(extract) > 300_000:
+                raise EditorialError("O texto complementar excede 300 mil caracteres.")
+            content = full_text or abstract or extract
             sources.append({
                 "source_id": f"{pmid}:main" if index == 0 else f"{pmid}:ref{index}",
                 "role": "main" if index == 0 else "context",
@@ -129,11 +133,11 @@ def evidence_packet(articles, context, base_dir=None):
                 "authors": item.get("autores") or [item.get("primeiro_autor") or "Autor não informado"],
                 "publication_date": _clean(item.get("data_publicacao")),
                 "study_types": item.get("tipos") or [], "abstract": abstract,
-                "content": full_text or abstract,
-                "material": "full_text_pdf" if full_text else "original_abstract" if original else "translated_abstract" if abstract else "metadata_only",
+                "content": content,
+                "material": "full_text_pdf" if full_text else "original_abstract" if original else "translated_abstract" if abstract else (item.get("material") or "relevant_extract") if extract else "metadata_only",
                 "pdf": ({key: pdf[key] for key in ("id", "filename", "sha256", "page_count", "extracted_page_count", "character_count")} if pdf else None),
             })
-            total_content_chars += len(full_text or abstract)
+            total_content_chars += len(content)
         if not sources[0]["content"]:
             raise EditorialError(f"PMID {pmid} sem resumo ou PDF: falta material para o roteiro.")
         packet.append({"pmid": pmid, "selection_mode": group.get("modo", "automatic"), "sources": sources})
@@ -275,7 +279,7 @@ def generate_episode_steps(articles, context, client, base_dir=None, episode_con
         audit = _request(client, model, "audit", AUDIT_SCHEMA, {"evidence": packet, "plan": plan, "script": script}, usage)
     except Exception as error:
         # A generated script must remain inspectable even if validation/audit fails.
-        # This blocking issue also prevents approval when the audit never ran.
+        # Preserve the failed check for explicit human review before approval.
         audit = {"issues": [{"severity": "blocking", "location": "Validação/auditoria do roteiro",
                              "reason": f"{type(error).__name__}: {error}"}]}
     blocked = any(issue['severity'] == 'blocking' for issue in audit['issues'])
@@ -396,8 +400,12 @@ def approve_draft(base_dir, draft_id, sha256):
     draft = load_draft(base_dir, draft_id)
     if sha256 != draft["sha256"]:
         raise EditorialError("Esta versão não é a exibida na revisão. Recarregue o roteiro.")
-    if any(issue["severity"] == "blocking" for issue in draft["audit"]["issues"]):
-        raise EditorialError("Há pendências científicas bloqueantes. Gere um novo roteiro antes de aprovar.")
+    if draft["status"] not in {"pending_review", "blocked", "approved"}:
+        raise EditorialError("Aguarde a conferência terminar antes de aprovar esta versão.")
+    draft["approval"] = {
+        "sha256": sha256,
+        "with_scientific_issues": any(i["severity"] == "blocking" for i in draft["audit"]["issues"]),
+    }
     draft.update(status="approved", approved_at=datetime.now(timezone.utc).isoformat())
     save_draft(base_dir, draft)
     return draft
@@ -407,8 +415,6 @@ def approved_audio(base_dir, draft_id, sha256):
     draft = load_draft(base_dir, draft_id)
     if draft["status"] != "approved" or draft["sha256"] != sha256:
         raise EditorialError("Revise e aprove esta versão do roteiro antes de gerar áudio.")
-    if any(i["severity"] == "blocking" for i in draft["audit"]["issues"]):
-        raise EditorialError("Roteiro com pendências científicas bloqueantes.")
     return draft
 
 
@@ -425,5 +431,6 @@ def review_payload(draft):
             "model": draft["model"], "title": draft["script"]["title"], "text": transcript(draft),
             "plan": draft["plan"], "audit": draft["audit"], "usage": draft["usage"],
             "evidence": public_evidence, "episode_context": draft.get("episode_context"),
-            "can_approve": not any(i["severity"] == "blocking" for i in draft["audit"]["issues"]),
+            "can_approve": draft["status"] in {"pending_review", "blocked", "approved"},
+            "approval": draft.get("approval"),
             "download_url": f'/podcast-roteiro/{draft["id"]}/texto'}
