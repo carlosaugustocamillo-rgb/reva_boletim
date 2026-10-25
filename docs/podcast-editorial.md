@@ -186,6 +186,15 @@ precisam ser implantados juntos. A pasta `data` deve continuar persistida no vol
 
 Esta implementação não faz commit, push, deploy nem publicação automaticamente.
 
+### Dependências do build
+
+O build Railway de 24/10/2026 falhou antes de iniciar a API, com
+`resolution-too-deep` no pip. `requirements.txt` fixa as versões compatíveis dos
+SDKs Firebase/Google, protobuf e gRPC para evitar a busca ilimitada entre versões
+incompatíveis. O SDK `google-generativeai` continua necessário aos outros fluxos.
+Ao atualizar essas versões, validar a resolução limpa em Linux/Python 3.11 e
+aguardar a implantação concluir antes de confirmar a liberação em produção.
+
 ## Verificação
 
 `python -m unittest test_podcast_editorial test_podcast_editorial_api test_podcast_pubmed_integration test_podcast_voice_settings test_elevenlabs_utils test_pubmed_related test_connected_papers test_pubmed_fetch_resilience`
