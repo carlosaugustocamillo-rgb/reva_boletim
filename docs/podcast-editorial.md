@@ -146,6 +146,15 @@ que protege roteiro, pauta, fontes e auditoria. Alterações invalidam a versão
 Os JSON/TXT antigos de etapas 8/8.5 são aliases de compatibilidade; não são a fonte
 de autorização para áudio. O áudio usa o JSON editorial aprovado.
 
+No Railway, cada gravação também salva o JSON em
+`internal/revacast/editorial/<uuid>.json` no Firebase Storage, sem torná-lo público.
+O GET recupera rascunhos ausentes do disco temporário e confere ID e SHA antes de
+usá-los. “Revisar último roteiro” considera a criação do rascunho remoto, não a
+data da última aprovação. `PODCAST_DRAFT_REMOTE_BACKUP=true` habilita o mesmo
+comportamento fora do Railway; `false` desabilita. Os PDFs brutos continuam
+dependendo do disco/volume; o rascunho completo preserva o conteúdo já extraído
+usado na geração e na auditoria, inclusive após uma edição manual.
+
 Roteiros gerados que falhem na validação ou na auditoria são preservados como
 `blocked`, com pendência visível no painel, sem substituir os aliases ativos ou
 produzir um brief. Quando houver tentativa de ajuste, `original_script` guarda

@@ -310,6 +310,27 @@ def draft_path(base_dir, draft_id):
     return Path(base_dir) / "editorial" / f"{draft_id}.json"
 
 
+def _backup_bucket():
+    """Use private Firebase backups on Railway, where the local disk is ephemeral."""
+    enabled = os.environ.get("PODCAST_DRAFT_REMOTE_BACKUP")
+    if enabled == "false" or not (enabled == "true" or os.environ.get("RAILWAY_ENVIRONMENT_ID")):
+        return None
+    from firebase_admin import storage
+    return storage.bucket()
+
+
+def latest_remote_draft_id():
+    bucket = _backup_bucket()
+    if bucket is None:
+        return None
+    records = [blob for blob in bucket.list_blobs(prefix="internal/revacast/editorial/")
+               if re.fullmatch(r"internal/revacast/editorial/[a-f0-9]{32}\.json", blob.name)]
+    if not records:
+        return None
+    latest = max(records, key=lambda blob: (blob.metadata or {}).get("created_at", ""))
+    return Path(latest.name).stem
+
+
 def save_draft(base_dir, draft):
     path = draft_path(base_dir, draft["id"])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,12 +343,39 @@ def save_draft(base_dir, draft):
         if temp.exists():
             temp.unlink()
     path.with_suffix(".txt").write_text(transcript(draft), encoding="utf-8")
+    bucket = _backup_bucket()
+    if bucket is not None:
+        blob = bucket.blob(f'internal/revacast/editorial/{draft["id"]}.json')
+        blob.metadata = {"created_at": draft["created_at"]}
+        # Do not make the source material or unpublished scripts public.
+        blob.upload_from_string(json.dumps(draft, ensure_ascii=False), content_type="application/json", timeout=30)
 
 
 def load_draft(base_dir, draft_id):
-    draft = json.loads(draft_path(base_dir, draft_id).read_text(encoding="utf-8"))
+    path = draft_path(base_dir, draft_id)
+    try:
+        draft = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        bucket = _backup_bucket()
+        if bucket is None:
+            raise
+        from google.api_core.exceptions import NotFound
+        try:
+            draft = json.loads(bucket.blob(f'internal/revacast/editorial/{draft_id}.json').download_as_bytes(timeout=30))
+        except NotFound as error:
+            raise FileNotFoundError(path) from error
+        if draft.get("id") != draft_id:
+            raise EditorialError("Backup não corresponde ao roteiro solicitado.")
     if draft["sha256"] != fingerprint(draft):
         raise EditorialError("Roteiro alterado após a revisão; gere uma nova versão.")
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp = path.with_suffix(f".{uuid.uuid4().hex}.tmp")
+        try:
+            temp.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+            os.replace(temp, path)
+        finally:
+            temp.unlink(missing_ok=True)
     return draft
 
 

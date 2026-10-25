@@ -1139,6 +1139,9 @@ async def get_ultimo_roteiro():
     """Readable canonical episode first; legacy JSON remains available for old editions."""
     base_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
     editorial_dir = os.path.join(base_dir, "editorial")
+    remote_id = podcast_editorial.latest_remote_draft_id()
+    if remote_id:
+        podcast_editorial.load_draft(base_dir, remote_id)
     if os.path.isdir(editorial_dir):
         drafts = [name for name in os.listdir(editorial_dir) if re.fullmatch(r"[a-f0-9]{32}\.json", name)]
         if drafts:

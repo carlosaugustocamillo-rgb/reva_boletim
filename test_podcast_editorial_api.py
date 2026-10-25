@@ -48,6 +48,22 @@ class EditorialApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.text, data['editorial']['text'])
 
+    def test_latest_restores_remote_backup_after_container_replacement(self):
+        import shutil
+        from unittest.mock import MagicMock
+        shutil.rmtree(self.root / 'data' / 'editorial')
+        bucket = MagicMock()
+        blob = bucket.blob.return_value
+        blob.name = f'internal/revacast/editorial/{self.draft["id"]}.json'
+        blob.metadata = {'created_at': self.draft['created_at']}
+        blob.download_as_bytes.return_value = json.dumps(self.draft).encode()
+        bucket.list_blobs.return_value = [blob]
+        with patch.object(podcast_editorial, '_backup_bucket', return_value=bucket):
+            response = self.client.get('/ultimo-roteiro')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['editorial']['sha256'], self.draft['sha256'])
+        self.assertEqual(response.json()['editorial']['text'], podcast_editorial.transcript(self.draft))
+
     def test_approval_http_contract_stale_hash_and_missing_file(self):
         url = f'/podcast-roteiro/{self.draft["id"]}/aprovar'
         self.assertEqual(self.client.post(url, json={'sha256': 'stale'}).status_code, 409)
